@@ -575,11 +575,11 @@ def validate_phone_number(number, international=False):
 
     number = normalise_phone_number(number)
 
-    if len(number) < 8:
-        raise InvalidPhoneError("Mobile number is too short")
+    if len(number) < 11:
+        raise InvalidPhoneError("Not enough digits")
 
-    if len(number) > 15:
-        raise InvalidPhoneError("Mobile number is too long")
+    if len(number) > 11:
+        raise InvalidPhoneError("Too many digits")
 
     if get_international_prefix(number) is None:
         raise InvalidPhoneError("Country code not found - double check the mobile number you entered")
