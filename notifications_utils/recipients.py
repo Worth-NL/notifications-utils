@@ -589,10 +589,10 @@ def validate_phone_number(number, international=False):
 
     number = normalise_phone_number(number)
 
-    if len(number) < 8:
+    if len(number) < 11:
         raise InvalidPhoneError("Not enough digits")
 
-    if len(number) > 15:
+    if len(number) > 11:
         raise InvalidPhoneError("Too many digits")
 
     if get_international_prefix(number) is None:
