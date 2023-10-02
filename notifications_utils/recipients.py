@@ -570,13 +570,13 @@ def validate_uk_phone_number(number):
 
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
-    if not number.startswith("7"):
-        raise InvalidPhoneError("Not a UK mobile number")
+    if not number.startswith("+31"):
+        raise InvalidPhoneError("Please enter mobile number according to the expected format")
 
-    if len(number) > 10:
+    if len(number) > 11:
         raise InvalidPhoneError("Too many digits")
 
-    if len(number) < 10:
+    if len(number) < 11:
         raise InvalidPhoneError("Not enough digits")
 
     return f"{uk_prefix}{number}"
