@@ -7,7 +7,6 @@ from typing import Sequence
 
 from flask import g, request
 from flask.ctx import has_app_context, has_request_context
-from opencensus.ext.azure.log_exporter import AzureLogHandler
 from pythonjsonlogger.jsonlogger import JsonFormatter as BaseJSONFormatter
 
 LOG_FORMAT = (
@@ -25,8 +24,7 @@ def init_app(app, statsd_client=None, extra_filters: Sequence[logging.Filter] = 
     app.config.setdefault("NOTIFY_RUNTIME_PLATFORM", None)
 
     del app.logger.handlers[:]
-
-    logging.getLogger().addHandler(AzureLogHandler())
+    logging.getLogger().addHandler(logging.NullHandler())
 
     if app.config["NOTIFY_RUNTIME_PLATFORM"] != "ecs":
         # TODO: ecs-migration: check if we still need this function after we migrate to ecs
