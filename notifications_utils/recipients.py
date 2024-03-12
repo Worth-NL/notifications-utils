@@ -32,7 +32,7 @@ from notifications_utils.template import BaseLetterTemplate, Template
 from . import EMAIL_REGEX_PATTERN, hostname_part, tld_part
 from .qr_code import QrCodeTooLong
 
-uk_prefix = "44"
+uk_prefix = "31"  # TODO: yes, "uk_prefix" is confusing, needs to be reviewed as part of a bigger refactor for NL usage
 
 first_column_headings = {
     "email": ["email address"],
@@ -512,7 +512,7 @@ def is_uk_phone_number(number):
 
     number = normalise_phone_number(number)
 
-    if number.startswith(uk_prefix) or (number.startswith("7") and len(number) < 11):
+    if number.startswith(uk_prefix) or (number.startswith("6") and len(number) == 9):
         return True
 
     return False
@@ -570,13 +570,13 @@ def validate_uk_phone_number(number):
 
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
-    if not number.startswith("+31"):
-        raise InvalidPhoneError("Please enter mobile number according to the expected format")
+    if not number.startswith("6"):
+        raise InvalidPhoneError("Not a Dutch mobile number")
 
-    if len(number) > 11:
+    if len(number) > 9:
         raise InvalidPhoneError("Too many digits")
 
-    if len(number) < 11:
+    if len(number) < 9:
         raise InvalidPhoneError("Not enough digits")
 
     return f"{uk_prefix}{number}"
