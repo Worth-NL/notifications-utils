@@ -3,7 +3,7 @@ import re
 from itertools import count
 
 import mistune
-from orderedset import OrderedSet
+from ordered_set import OrderedSet
 
 from notifications_utils import MAGIC_SEQUENCE, magic_sequence_regex
 from notifications_utils.formatters import create_sanitised_html_for_url, replace_svg_dashes
@@ -72,9 +72,6 @@ def qr_code_contents_from_paragraph(text):
 
 class NotifyLetterMarkdownPreviewRenderer(mistune.Renderer):
     def _render_qr_data(self, data):
-        # Restore http:// or https:// and strip out the <strong> tag that gets injected by the `link`/`autolink` methods
-        data = re.sub(r"<strong data-original-protocol='(https?://)'>(.*?)</strong>", r"\1\2", data)
-
         if "<span class='placeholder" in data or '<span class="placeholder' in data:
             placeholder = qr_code_placeholder(data)
             return replace_svg_dashes(placeholder)
@@ -101,7 +98,11 @@ class NotifyLetterMarkdownPreviewRenderer(mistune.Renderer):
             return ""
 
         if qr_code_contents := qr_code_contents_from_paragraph(text):
-            text = self._render_qr_data(qr_code_contents)
+            # Restore http:// or https:// and strip out the <strong> tag that gets injected by
+            # the `link`/`autolink` methods
+            text = self._render_qr_data(
+                re.sub(r"<strong data-original-protocol='(https?://|)'>(.*?)</strong>", r"\1\2", qr_code_contents)
+            )
 
         return f"<p>{text}</p>"
 
@@ -109,9 +110,14 @@ class NotifyLetterMarkdownPreviewRenderer(mistune.Renderer):
         return ""
 
     def autolink(self, link, is_email=False):
-        link_without_protocol = link.replace("http://", "").replace("https://", "")
-        protocol = link[: (len(link) - len(link_without_protocol))]
-        return f"<strong data-original-protocol='{protocol}'>{link_without_protocol}</strong>"
+        proto_matcher = re.compile(r"^(https?://)")
+
+        protocol = ""
+        if match := proto_matcher.match(link):
+            protocol = match.group(1)
+            link = proto_matcher.sub("", link, 1)
+
+        return f"<strong data-original-protocol='{protocol}'>{link}</strong>"
 
     def image(self, src, title, alt_text):
         return ""
@@ -129,7 +135,10 @@ class NotifyLetterMarkdownPreviewRenderer(mistune.Renderer):
         if link.startswith("span class='placeholder") and link.endswith("</span"):
             link = f"<{link}>"
 
-        return f"{content}: {self.autolink(link)}"
+        if title:
+            return f'[{content}]({link} "{title}")'
+
+        return f"[{content}]({link})"
 
     def footnote_ref(self, key, index):
         return ""
@@ -173,7 +182,7 @@ class NotifyEmailMarkdownRenderer(NotifyLetterMarkdownPreviewRenderer):
         return '<hr style="border: 0; height: 1px; background: #B1B4B6; Margin: 30px 0 30px 0;">'
 
     def linebreak(self):
-        return "<br />"
+        return "<br>"
 
     def list(self, body, ordered=True):
         return (
@@ -239,7 +248,6 @@ class NotifyEmailMarkdownRenderer(NotifyLetterMarkdownPreviewRenderer):
 
 
 class NotifyPlainTextEmailMarkdownRenderer(NotifyEmailMarkdownRenderer):
-
     COLUMN_WIDTH = 65
 
     def header(self, text, level, raw=None):

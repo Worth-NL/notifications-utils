@@ -1,6 +1,5 @@
 import datetime
 import os
-import sys
 from time import process_time
 from unittest import mock
 
@@ -8,18 +7,15 @@ import pytest
 from bs4 import BeautifulSoup
 from freezegun import freeze_time
 from markupsafe import Markup
-from orderedset import OrderedSet
+from ordered_set import OrderedSet
 
 from notifications_utils.formatters import unlink_govuk_escaped
 from notifications_utils.template import (
-    BaseBroadcastTemplate,
     BaseEmailTemplate,
     BaseLetterTemplate,
-    BroadcastMessageTemplate,
-    BroadcastPreviewTemplate,
+    BaseSMSTemplate,
     EmailPreviewTemplate,
     HTMLEmailTemplate,
-    LetterImageTemplate,
     LetterPreviewTemplate,
     LetterPrintTemplate,
     PlainTextEmailTemplate,
@@ -32,54 +28,19 @@ from notifications_utils.template import (
 
 
 @pytest.mark.parametrize(
-    "template_class, expected_error",
+    "template_class",
     (
-        pytest.param(
-            Template,
-            ("Can't instantiate abstract class Template with abstract methods __str__"),
-            marks=pytest.mark.skipif(sys.version_info >= (3, 9), reason="‘methods’ will be singular"),
-        ),
-        pytest.param(
-            Template,
-            ("Can't instantiate abstract class Template with abstract method __str__"),
-            marks=pytest.mark.skipif(sys.version_info < (3, 9), reason="‘method’ will be pluralised"),
-        ),
-        pytest.param(
-            BaseEmailTemplate,
-            ("Can't instantiate abstract class BaseEmailTemplate with abstract methods __str__"),
-            marks=pytest.mark.skipif(sys.version_info >= (3, 9), reason="‘methods’ will be singular"),
-        ),
-        pytest.param(
-            BaseEmailTemplate,
-            ("Can't instantiate abstract class BaseEmailTemplate with abstract method __str__"),
-            marks=pytest.mark.skipif(sys.version_info < (3, 9), reason="‘method’ will be pluralised"),
-        ),
-        pytest.param(
-            BaseLetterTemplate,
-            ("Can't instantiate abstract class BaseLetterTemplate with abstract methods __str__"),
-            marks=pytest.mark.skipif(sys.version_info >= (3, 9), reason="‘methods’ will be singular"),
-        ),
-        pytest.param(
-            BaseLetterTemplate,
-            ("Can't instantiate abstract class BaseLetterTemplate with abstract method __str__"),
-            marks=pytest.mark.skipif(sys.version_info < (3, 9), reason="‘method’ will be pluralised"),
-        ),
-        pytest.param(
-            BaseBroadcastTemplate,
-            ("Can't instantiate abstract class BaseBroadcastTemplate with abstract methods __str__"),
-            marks=pytest.mark.skipif(sys.version_info >= (3, 9), reason="‘methods’ will be singular"),
-        ),
-        pytest.param(
-            BaseBroadcastTemplate,
-            ("Can't instantiate abstract class BaseBroadcastTemplate with abstract method __str__"),
-            marks=pytest.mark.skipif(sys.version_info < (3, 9), reason="‘method’ will be pluralised"),
-        ),
+        Template,
+        BaseEmailTemplate,
+        BaseLetterTemplate,
+        BaseSMSTemplate,
     ),
 )
-def test_abstract_classes_cant_be_instantiated(template_class, expected_error):
+def test_abstract_classes_cant_be_instantiated(template_class):
     with pytest.raises(TypeError) as error:
         template_class({})
-    assert str(error.value) == expected_error
+    assert f"Can't instantiate abstract class {template_class.__name__}" in str(error.value)
+    assert "__str__" in str(error.value)
 
 
 @pytest.mark.parametrize(
@@ -87,7 +48,6 @@ def test_abstract_classes_cant_be_instantiated(template_class, expected_error):
     (
         (HTMLEmailTemplate, ("Cannot initialise HTMLEmailTemplate with sms template_type")),
         (LetterPreviewTemplate, ("Cannot initialise LetterPreviewTemplate with sms template_type")),
-        (BroadcastPreviewTemplate, ("Cannot initialise BroadcastPreviewTemplate with sms template_type")),
     ),
 )
 def test_errors_for_incompatible_template_type(template_class, expected_error):
@@ -241,7 +201,6 @@ def test_alt_text_with_no_govuk_banner(brand_banner, brand_text, expected_alt_te
 )
 @pytest.mark.parametrize("content", ("DOCTYPE", "html", "body"))
 def test_complete_html(complete_html, branding_should_be_present, brand_logo, brand_text, brand_colour, content):
-
     email = str(
         HTMLEmailTemplate(
             {"content": "hello world", "subject": "", "template_type": "email"},
@@ -282,7 +241,7 @@ def test_preheader_is_at_start_of_html_emails():
     assert (
         '<body style="font-family: Helvetica, Arial, sans-serif;font-size: 16px;margin: 0;color:#0b0c0c;">\n'
         "\n"
-        '<span style="display: none;font-size: 1px;color: #fff; max-height: 0;">content…</span>'
+        '<span style="display: none;font-size: 1px;color: #fff; max-height: 0;" hidden>content…</span>'
     ) in str(HTMLEmailTemplate({"content": "content", "subject": "subject", "template_type": "email"}))
 
 
@@ -399,7 +358,6 @@ def test_markdown_in_templates(
         (HTMLEmailTemplate, "email", 'style="word-wrap: break-word; color: #1D70B8;"'),
         (EmailPreviewTemplate, "email", 'style="word-wrap: break-word; color: #1D70B8;"'),
         (SMSPreviewTemplate, "sms", 'class="govuk-link govuk-link--no-visited-state"'),
-        (BroadcastPreviewTemplate, "broadcast", 'class="govuk-link govuk-link--no-visited-state"'),
         pytest.param(SMSBodyPreviewTemplate, "sms", 'style="word-wrap: break-word;', marks=pytest.mark.xfail),
     ],
 )
@@ -432,13 +390,6 @@ def test_makes_links_out_of_URLs(extra_attributes, template_class, template_type
 
 
 @pytest.mark.parametrize(
-    "template_class, template_type",
-    (
-        (SMSPreviewTemplate, "sms"),
-        (BroadcastPreviewTemplate, "broadcast"),
-    ),
-)
-@pytest.mark.parametrize(
     "url, url_with_entities_replaced",
     (
         ("example.com", "example.com"),
@@ -451,9 +402,7 @@ def test_makes_links_out_of_URLs(extra_attributes, template_class, template_type
         ),
     ),
 )
-def test_makes_links_out_of_URLs_without_protocol_in_sms_and_broadcast(
-    template_class,
-    template_type,
+def test_makes_links_out_of_URLs_without_protocol_in_sms_and(
     url,
     url_with_entities_replaced,
 ):
@@ -463,7 +412,7 @@ def test_makes_links_out_of_URLs_without_protocol_in_sms_and_broadcast(
         f'href="http://{url_with_entities_replaced}">'
         f"{url_with_entities_replaced}"
         f"</a>"
-    ) in str(template_class({"content": url, "subject": "", "template_type": template_type}))
+    ) in str(SMSPreviewTemplate({"content": url, "subject": "", "template_type": "sms"}))
 
 
 @pytest.mark.parametrize(
@@ -562,13 +511,10 @@ def test_stripping_of_unsupported_characters_in_email_templates():
     [
         (SMSMessageTemplate, "a", "b", (Markup("b"), "a")),
         (SMSPreviewTemplate, "a", "b", (Markup("b"), "a")),
-        (BroadcastPreviewTemplate, "a", "b", (Markup("b"), "a")),
         (SMSMessageTemplate, None, "b", (Markup("b"), None)),
         (SMSPreviewTemplate, None, "b", (Markup("b"), None)),
-        (BroadcastPreviewTemplate, None, "b", (Markup("b"), None)),
         (SMSMessageTemplate, "<em>ht&ml</em>", "b", (Markup("b"), "<em>ht&ml</em>")),
         (SMSPreviewTemplate, "<em>ht&ml</em>", "b", (Markup("b"), "&lt;em&gt;ht&amp;ml&lt;/em&gt;")),
-        (BroadcastPreviewTemplate, "<em>ht&ml</em>", "b", (Markup("b"), "&lt;em&gt;ht&amp;ml&lt;/em&gt;")),
     ],
 )
 def test_sms_message_adds_prefix(add_prefix, template_class, prefix, body, expected_call):
@@ -585,7 +531,6 @@ def test_sms_message_adds_prefix(add_prefix, template_class, prefix, body, expec
     [
         SMSMessageTemplate,
         SMSPreviewTemplate,
-        BroadcastPreviewTemplate,
     ],
 )
 @pytest.mark.parametrize(
@@ -646,8 +591,6 @@ def test_sms_message_preview_hides_sender_by_default():
     (
         (SMSMessageTemplate, {"prefix": "Service name"}, "Service name: Message"),
         (SMSPreviewTemplate, {"prefix": "Service name"}, "Service name: Message"),
-        (BroadcastMessageTemplate, {}, "Message"),
-        (BroadcastPreviewTemplate, {"prefix": "Service name"}, "Service name: Message"),
         (SMSBodyPreviewTemplate, {}, "Message"),
     ),
 )
@@ -657,23 +600,16 @@ def test_sms_messages_downgrade_non_sms(
     extra_args,
     expected_call,
 ):
-    template = str(template_class({"content": "Message", "template_type": template_class.template_type}, **extra_args))
+    template = str(template_class({"content": "Message", "template_type": "sms"}, **extra_args))
     assert "downgraded" in str(template)
     mock_sms_encode.assert_called_once_with(expected_call)
 
 
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        SMSPreviewTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
 @mock.patch("notifications_utils.template.sms_encode", return_value="downgraded")
-def test_sms_messages_dont_downgrade_non_sms_if_setting_is_false(mock_sms_encode, template_class):
+def test_sms_messages_dont_downgrade_non_sms_if_setting_is_false(mock_sms_encode):
     template = str(
-        template_class(
-            {"content": "😎", "template_type": template_class.template_type},
+        SMSPreviewTemplate(
+            {"content": "😎", "template_type": "sms"},
             prefix="👉",
             downgrade_non_sms_characters=False,
         )
@@ -682,17 +618,10 @@ def test_sms_messages_dont_downgrade_non_sms_if_setting_is_false(mock_sms_encode
     assert mock_sms_encode.called is False
 
 
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        SMSPreviewTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
 @mock.patch("notifications_utils.template.nl2br")
-def test_sms_preview_adds_newlines(nl2br, template_class):
+def test_sms_preview_adds_newlines(nl2br):
     content = "the\nquick\n\nbrown fox"
-    str(template_class({"content": content, "template_type": template_class.template_type}))
+    str(SMSPreviewTemplate({"content": content, "template_type": "sms"}))
     nl2br.assert_called_once_with(content)
 
 
@@ -712,28 +641,12 @@ def test_sms_message_normalises_newlines(content):
 
 
 @pytest.mark.parametrize(
-    "content",
-    [
-        ("one newline\n" "two newlines\n" "\n" "end"),  # Unix-style
-        ("one newline\r\n" "two newlines\r\n" "\r\n" "end"),  # Windows-style
-        ("one newline\r" "two newlines\r" "\r" "end"),  # Mac Classic style
-        ("\t\t\n\r one newline\xa0\n" "two newlines\r" "\r\n" "end\n\n  \r \n \t "),  # A mess
-    ],
-)
-def test_broadcast_message_normalises_newlines(content):
-    assert str(BroadcastMessageTemplate({"content": content, "template_type": "broadcast"})) == (
-        "one newline\n" "two newlines\n" "\n" "end"
-    )
-
-
-@pytest.mark.parametrize(
     "template_class",
     (
         SMSMessageTemplate,
         SMSBodyPreviewTemplate,
-        BroadcastMessageTemplate,
-        # Note: SMSPreviewTemplate and BroadcastPreviewTemplate not tested here
-        # as both will render full HTML template, not just the body
+        # Note: SMSPreviewTemplate not tested here as both will render full
+        # HTML template, not just the body
     ),
 )
 def test_phone_templates_normalise_whitespace(template_class):
@@ -868,6 +781,7 @@ def test_letter_preview_renderer(
             "admin_base_url": "http://localhost:6012",
             "logo_file_name": expected_logo_file_name,
             "logo_class": expected_logo_class,
+            "language": "english",
         }
     )
     letter_markdown.assert_called_once_with(Markup("Foo\n"))
@@ -877,7 +791,6 @@ def test_letter_preview_renderer(
 @freeze_time("2001-01-01 12:00:00.000000")
 @mock.patch("notifications_utils.template.LetterPreviewTemplate.jinja_template.render")
 def test_letter_preview_renderer_without_mocks(jinja_template):
-
     str(
         LetterPreviewTemplate(
             {"content": "Foo", "subject": "Subject", "template_type": "letter"},
@@ -903,7 +816,6 @@ def test_letter_preview_renderer_without_mocks(jinja_template):
 
 @mock.patch("notifications_utils.template.LetterPreviewTemplate.jinja_template.render")
 def test_letter_preview_renders_QR_code_correctly(jinja_template):
-
     str(
         LetterPreviewTemplate(
             {
@@ -922,173 +834,12 @@ def test_letter_preview_renders_QR_code_correctly(jinja_template):
     assert jinja_template_locals["message"] == expected_qr_code_svg
 
 
-@freeze_time("2012-12-12 12:12:12")
-@mock.patch("notifications_utils.template.LetterImageTemplate.jinja_template.render")
-@pytest.mark.parametrize(
-    "page_count, expected_oversized, expected_page_numbers",
-    [
-        (
-            1,
-            False,
-            [1],
-        ),
-        (
-            5,
-            False,
-            [1, 2, 3, 4, 5],
-        ),
-        (
-            10,
-            False,
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        ),
-        (
-            11,
-            True,
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        ),
-        (
-            99,
-            True,
-            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        ),
-    ],
-)
-@pytest.mark.parametrize(
-    "postage_args, expected_show_postage, expected_postage_class_value, expected_postage_description",
-    (
-        pytest.param({}, False, None, None),
-        pytest.param({"postage": None}, False, None, None),
-        pytest.param({"postage": "first"}, True, "letter-postage-first", "first class"),
-        pytest.param({"postage": "second"}, True, "letter-postage-second", "second class"),
-        pytest.param({"postage": "europe"}, True, "letter-postage-international", "international"),
-        pytest.param({"postage": "rest-of-world"}, True, "letter-postage-international", "international"),
-        pytest.param(
-            {"postage": "third"},
-            True,
-            "letter-postage-third",
-            "third class",
-            marks=pytest.mark.xfail(raises=TypeError),
-        ),
-    ),
-)
-def test_letter_image_renderer(
-    jinja_template,
-    page_count,
-    expected_page_numbers,
-    expected_oversized,
-    postage_args,
-    expected_show_postage,
-    expected_postage_class_value,
-    expected_postage_description,
-):
-    str(
-        LetterImageTemplate(
-            {"content": "Content", "subject": "Subject", "template_type": "letter"} | postage_args,
-            image_url="http://example.com/endpoint.png",
-            page_count=page_count,
-            contact_block="10 Downing Street",
-        )
-    )
-    jinja_template.assert_called_once_with(
-        {
-            "image_url": "http://example.com/endpoint.png",
-            "page_numbers": expected_page_numbers,
-            "first_page_of_attachment": None,
-            "address": [
-                "<span class='placeholder-no-brackets'>address line 1</span>",
-                "<span class='placeholder-no-brackets'>address line 2</span>",
-                "<span class='placeholder-no-brackets'>address line 3</span>",
-                "<span class='placeholder-no-brackets'>address line 4</span>",
-                "<span class='placeholder-no-brackets'>address line 5</span>",
-                "<span class='placeholder-no-brackets'>address line 6</span>",
-                "<span class='placeholder-no-brackets'>address line 7</span>",
-            ],
-            "contact_block": "10 Downing Street",
-            "date": "12 December 2012",
-            "subject": "Subject",
-            "message": "<p>Content</p>",
-            "show_postage": expected_show_postage,
-            "postage_class_value": expected_postage_class_value,
-            "postage_description": expected_postage_description,
-        }
-    )
-
-
-@pytest.mark.parametrize(
-    "page_count, expected_classes",
-    (
-        (
-            1,
-            [
-                ["letter", "page--odd", "page--first", "page--last"],
-            ],
-        ),
-        (
-            2,
-            [
-                ["letter", "page--odd", "page--first"],
-                ["letter", "page--even", "page--last"],
-            ],
-        ),
-        (
-            5,
-            [
-                ["letter", "page--odd", "page--first"],
-                ["letter", "page--even"],
-                ["letter", "page--odd"],
-                ["letter", "page--even"],
-                ["letter", "page--odd", "page--last"],
-            ],
-        ),
-    ),
-)
-def test_letter_image_renderer_adds_classes_to_pages(
-    page_count,
-    expected_classes,
-):
-    template = BeautifulSoup(
-        str(
-            LetterImageTemplate(
-                {"content": "Content", "subject": "Subject", "template_type": "letter"},
-                image_url="http://example.com/endpoint.png",
-                page_count=page_count,
-            )
-        ),
-        features="html.parser",
-    )
-    assert [page["class"] for page in template.select(".letter")] == expected_classes
-
-
-@pytest.mark.parametrize(
-    "page_count, expected_too_many_pages",
-    (
-        (1, False),
-        (10, False),
-        (11, True),
-        (99, True),
-    ),
-)
-def test_letter_image_renderer_knows_if_letter_is_too_long(
-    page_count,
-    expected_too_many_pages,
-):
-    template = LetterImageTemplate(
-        {"content": "Content", "subject": "Subject", "template_type": "letter"},
-        page_count=page_count,
-    )
-    assert template.too_many_pages is expected_too_many_pages
-    assert template.max_page_count == 10
-    assert template.max_sheet_count == 5
-
-
 @pytest.mark.parametrize(
     "template_class",
     (
         BaseLetterTemplate,
         LetterPreviewTemplate,
         LetterPrintTemplate,
-        LetterImageTemplate,
     ),
 )
 def test_max_page_count_on_all_types_of_letter_template(template_class):
@@ -1109,195 +860,59 @@ def test_too_many_pages_raises_for_unknown_page_count(template_class):
         template.too_many_pages  # noqa
 
 
-@freeze_time("2012-12-12 12:12:12")
-@mock.patch("notifications_utils.template.LetterImageTemplate.jinja_template.render")
-@pytest.mark.parametrize(
-    "postage_argument",
-    (
-        None,
-        "first",
-        "second",
-        "europe",
-        "rest-of-world",
-    ),
-)
-def test_letter_image_renderer_shows_international_post(
-    jinja_template,
-    postage_argument,
-):
-    str(
-        LetterImageTemplate(
-            {"content": "Content", "subject": "Subject", "template_type": "letter", "postage": postage_argument},
-            {
-                "address line 1": "123 Example Street",
-                "address line 2": "Lima",
-                "address line 3": "Peru",
-            },
-            image_url="http://example.com/endpoint.png",
-            page_count=1,
-        )
-    )
-    assert jinja_template.call_args_list[0][0][0]["postage_description"] == ("international")
-
-
-def test_letter_image_template_renders_visually_hidden_address():
+@freeze_time("2023-10-31 00:00:01")
+def test_letter_template_shows_date_and_page_count_in_welsh_if_language_set_to_welsh():
     template = BeautifulSoup(
         str(
-            LetterImageTemplate(
-                {"content": "", "subject": "", "template_type": "letter"},
+            LetterPreviewTemplate(
                 {
-                    "address_line_1": "line 1",
-                    "address_line_2": "line 2",
-                    "postcode": "postcode",
+                    "content": "Some content",
+                    "subject": "Some subject",
+                    "letter_welsh_content": "Welsh content",
+                    "letter_welsh_subject": "Welsh subject",
+                    "template_type": "letter",
                 },
-                image_url="http://example.com/endpoint.png",
-                page_count=1,
+                language="welsh",
             )
         ),
         features="html.parser",
     )
-    assert str(template.select_one(".govuk-visually-hidden ul")) == (
-        "<ul>" "<li>line 1</li>" "<li>line 2</li>" "<li>postcode</li>" "</ul>"
+
+    assert "31 Hydref 2023" in template.text
+
+    assert 'content: "Tudalen " counter(page) " o " counter(pages);' in template.select_one("style").text
+
+
+def test_letter_template_shows_welsh_subject_and_content_if_language_set_to_welsh():
+    template = LetterPreviewTemplate(
+        {
+            "content": "Very good",
+            "letter_welsh_content": "Yn gwych",
+            "subject": "How are you",
+            "letter_welsh_subject": "Sut dych chi",
+            "template_type": "letter",
+        },
+        language="welsh",
     )
 
+    assert template.subject == "Sut dych chi"
+    assert template.content == "Yn gwych"
 
-@pytest.mark.parametrize(
-    "page_image_url",
-    [
-        pytest.param("http://example.com/endpoint.png?page=0", marks=pytest.mark.xfail),
-        "http://example.com/endpoint.png?page=1",
-        "http://example.com/endpoint.png?page=2",
-        "http://example.com/endpoint.png?page=3",
-        pytest.param("http://example.com/endpoint.png?page=4", marks=pytest.mark.xfail),
-    ],
-)
-def test_letter_image_renderer_pagination(page_image_url):
-    assert page_image_url in str(
-        LetterImageTemplate(
-            {"content": "", "subject": "", "template_type": "letter"},
-            image_url="http://example.com/endpoint.png",
-            page_count=3,
-        )
+
+def test_letter_template_detects_all_placeholders_in_both_english_and_welsh_subject_and_content():
+    template = LetterPreviewTemplate(
+        {
+            "content": "Send us ((document_type))",
+            "letter_welsh_content": "Anfonwch ((document_type_cy)) atom",
+            "subject": "Getting ((allowance_type))",
+            "letter_welsh_subject": "Cael ((allowance_type_cy))",
+            "template_type": "letter",
+        }
     )
 
-
-@pytest.mark.parametrize(
-    "kwargs, expected_exception, expected_exception_value",
-    (
-        (
-            {"image_url": "foo"},
-            TypeError,
-            "page_count is required to render LetterImageTemplate",
-        ),
-        (
-            {"image_url": "foo", "page_count": "foo"},
-            TypeError,
-            "'<' not supported between instances of 'int' and 'str'",
-        ),
-    ),
-)
-def test_letter_image_renderer_requires_page_count_to_render(kwargs, expected_exception, expected_exception_value):
-    template = LetterImageTemplate({"content": "", "subject": "", "template_type": "letter"}, **kwargs)
-    with pytest.raises(expected_exception) as exception:
-        str(template)
-    assert str(exception.value) == expected_exception_value
-
-
-def test_letter_image_renderer_requires_valid_postage():
-    with pytest.raises(TypeError) as exception:
-        LetterImageTemplate(
-            {"content": "", "subject": "", "template_type": "letter", "postage": "third"},
-            image_url="foo",
-        )
-    assert str(exception.value) == ("postage must be None, 'first', 'second', 'europe' or 'rest-of-world'")
-
-
-@pytest.mark.parametrize(
-    "initial_postage_value",
-    (
-        {},
-        {"postage": None},
-        {"postage": "first"},
-        {"postage": "second"},
-        {"postage": "europe"},
-        {"postage": "rest-of-world"},
-    ),
-)
-@pytest.mark.parametrize(
-    "postage_value",
-    (
-        None,
-        "first",
-        "second",
-        "europe",
-        "rest-of-world",
-        pytest.param("other", marks=pytest.mark.xfail(raises=TypeError)),
-    ),
-)
-def test_letter_image_renderer_postage_can_be_overridden(initial_postage_value, postage_value):
-    template = LetterImageTemplate({"content": "", "subject": "", "template_type": "letter"} | initial_postage_value)
-    assert template.postage == initial_postage_value.get("postage")
-
-    template.postage = postage_value
-    assert template.postage == postage_value
-
-
-def test_letter_image_renderer_requires_image_url_to_render():
-    template = LetterImageTemplate(
-        {"content": "", "subject": "", "template_type": "letter"},
-        page_count=1,
+    assert template.placeholders == OrderedSet(
+        ["allowance_type_cy", "allowance_type", "document_type_cy", "document_type"]
     )
-    with pytest.raises(TypeError) as exception:
-        str(template)
-    assert str(exception.value) == "image_url is required to render LetterImageTemplate"
-
-
-@pytest.mark.parametrize(
-    "postage, expected_attribute_value, expected_postage_text",
-    (
-        (None, None, None),
-        (
-            "first",
-            ["letter-postage", "letter-postage-first"],
-            "Postage: first class",
-        ),
-        (
-            "second",
-            ["letter-postage", "letter-postage-second"],
-            "Postage: second class",
-        ),
-        (
-            "europe",
-            ["letter-postage", "letter-postage-international"],
-            "Postage: international",
-        ),
-        (
-            "rest-of-world",
-            ["letter-postage", "letter-postage-international"],
-            "Postage: international",
-        ),
-    ),
-)
-def test_letter_image_renderer_passes_postage_to_html_attribute(
-    postage,
-    expected_attribute_value,
-    expected_postage_text,
-):
-    template = BeautifulSoup(
-        str(
-            LetterImageTemplate(
-                {"content": "", "subject": "", "template_type": "letter", "postage": postage},
-                image_url="foo",
-                page_count=1,
-            )
-        ),
-        features="html.parser",
-    )
-    if expected_attribute_value:
-        assert template.select_one(".letter-postage")["class"] == expected_attribute_value
-        assert template.select_one(".letter-postage").text.strip() == expected_postage_text
-    else:
-        assert not template.select(".letter-postage")
 
 
 @pytest.mark.parametrize(
@@ -1306,8 +921,6 @@ def test_letter_image_renderer_passes_postage_to_html_attribute(
         SMSBodyPreviewTemplate,
         SMSMessageTemplate,
         SMSPreviewTemplate,
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
     ),
 )
 @pytest.mark.parametrize(
@@ -1318,7 +931,7 @@ def test_letter_image_renderer_passes_postage_to_html_attribute(
     ),
 )
 def test_sms_templates_have_no_subject(template_class, template_json):
-    template_json.update(template_type=template_class.template_type)
+    template_json.update(template_type="sms")
     assert not hasattr(
         template_class(template_json),
         "subject",
@@ -1331,15 +944,12 @@ def test_subject_line_gets_applied_to_correct_template_types():
         HTMLEmailTemplate,
         PlainTextEmailTemplate,
         LetterPreviewTemplate,
-        LetterImageTemplate,
     ]:
         assert issubclass(cls, SubjectMixin)
     for cls in [
         SMSBodyPreviewTemplate,
         SMSMessageTemplate,
         SMSPreviewTemplate,
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
     ]:
         assert not issubclass(cls, SubjectMixin)
 
@@ -1352,14 +962,6 @@ def test_subject_line_gets_applied_to_correct_template_types():
         (PlainTextEmailTemplate, "email", {}),
         (LetterPreviewTemplate, "letter", {}),
         (LetterPrintTemplate, "letter", {}),
-        (
-            LetterImageTemplate,
-            "letter",
-            {
-                "image_url": "http://example.com",
-                "page_count": 1,
-            },
-        ),
     ),
 )
 def test_subject_line_gets_replaced(template_class, template_type, extra_args):
@@ -1377,14 +979,6 @@ def test_subject_line_gets_replaced(template_class, template_type, extra_args):
         (PlainTextEmailTemplate, "email", {}),
         (LetterPreviewTemplate, "letter", {}),
         (LetterPrintTemplate, "letter", {}),
-        (
-            LetterImageTemplate,
-            "letter",
-            {
-                "image_url": "http://example.com",
-                "page_count": 1,
-            },
-        ),
     ),
 )
 @pytest.mark.parametrize(
@@ -1461,49 +1055,6 @@ def test_character_count_for_sms_templates(
 
 
 @pytest.mark.parametrize(
-    "template_class",
-    [
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ],
-)
-@pytest.mark.parametrize(
-    "content, values, expected_count_in_template, expected_count_in_notification",
-    [
-        # is an unsupported unicode character so should be replaced with a ?
-        ("深", {}, 1, 1),
-        # is a supported unicode character so should be kept as is
-        ("Ŵ", {}, 1, 1),
-        ("'First line.\n", {}, 12, 12),
-        ("\t\n\r", {}, 0, 0),
-        ("Content with ((placeholder))", {"placeholder": "something extra here"}, 13, 33),
-        ("Content with ((placeholder))", {"placeholder": ""}, 13, 12),
-        ("Just content", {}, 12, 12),
-        ("((placeholder))  ", {"placeholder": "  "}, 0, 0),
-        ("  ", {}, 0, 0),
-        ("  G      D       S  ", {}, 5, 5),  # Becomes `G D S`
-        ("P1 \n\n\n\n\n\n P2", {}, 6, 6),  # Becomes `P1\n\nP2`
-    ],
-)
-def test_character_count_for_broadcast_templates(
-    content, values, expected_count_in_template, expected_count_in_notification, template_class
-):
-    template = template_class(
-        {"content": content, "template_type": "broadcast"},
-    )
-    assert template.content_count == expected_count_in_template
-    template.values = values
-    assert template.content_count == expected_count_in_notification
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        SMSMessageTemplate,
-        BroadcastMessageTemplate,
-    ),
-)
-@pytest.mark.parametrize(
     "msg, expected_sms_fragment_count",
     [
         ("à" * 71, 1),  # welsh character in GSM
@@ -1530,21 +1081,13 @@ def test_character_count_for_broadcast_templates(
     ],
 )
 def test_sms_fragment_count_accounts_for_unicode_and_welsh_characters(
-    template_class,
     msg,
     expected_sms_fragment_count,
 ):
-    template = template_class({"content": msg, "template_type": template_class.template_type})
+    template = SMSMessageTemplate({"content": msg, "template_type": "sms"})
     assert template.fragment_count == expected_sms_fragment_count
 
 
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        SMSMessageTemplate,
-        BroadcastMessageTemplate,
-    ),
-)
 @pytest.mark.parametrize(
     "msg, expected_sms_fragment_count",
     [
@@ -1561,11 +1104,10 @@ def test_sms_fragment_count_accounts_for_unicode_and_welsh_characters(
     ],
 )
 def test_sms_fragment_count_accounts_for_extended_gsm_characters(
-    template_class,
     msg,
     expected_sms_fragment_count,
 ):
-    template = template_class({"content": msg, "template_type": template_class.template_type})
+    template = SMSMessageTemplate({"content": msg, "template_type": "sms"})
     assert template.fragment_count == expected_sms_fragment_count
 
 
@@ -1590,31 +1132,6 @@ def test_is_message_empty_sms_templates(content, values, prefix, expected_result
     template = template_class(
         {"content": content, "template_type": "sms"},
         prefix=prefix,
-    )
-    template.sender = None
-    template.values = values
-    assert template.is_message_empty() == expected_result
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    [
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ],
-)
-@pytest.mark.parametrize(
-    "content, values, expected_result",
-    [
-        ("", {}, True),
-        ("((placeholder))", {"placeholder": ""}, True),
-        ("((placeholder))", {"placeholder": "Some content"}, False),
-        ("Some content", {}, False),
-    ],
-)
-def test_is_message_empty_broadcast_templates(content, values, expected_result, template_class):
-    template = template_class(
-        {"content": content, "template_type": "broadcast"},
     )
     template.sender = None
     template.values = values
@@ -1749,23 +1266,6 @@ def test_is_message_empty_email_and_letter_templates_tries_not_to_count_chars(
             ],
         ),
         (
-            BroadcastMessageTemplate,
-            "broadcast",
-            {},
-            [
-                mock.call("content", {}, html="escape"),
-            ],
-        ),
-        (
-            BroadcastPreviewTemplate,
-            "broadcast",
-            {},
-            [
-                mock.call("((phone number))", {}, with_brackets=False, html="escape"),
-                mock.call("content", {}, html="escape", redact_missing_personalisation=False),
-            ],
-        ),
-        (
             LetterPreviewTemplate,
             "letter",
             {"contact_block": "www.gov.uk"},
@@ -1790,30 +1290,6 @@ def test_is_message_empty_email_and_letter_templates_tries_not_to_count_chars(
             ],
         ),
         (
-            LetterImageTemplate,
-            "letter",
-            {"image_url": "http://example.com", "page_count": 1, "contact_block": "www.gov.uk"},
-            [
-                mock.call(
-                    (
-                        "((address line 1))\n"
-                        "((address line 2))\n"
-                        "((address line 3))\n"
-                        "((address line 4))\n"
-                        "((address line 5))\n"
-                        "((address line 6))\n"
-                        "((address line 7))"
-                    ),
-                    {},
-                    with_brackets=False,
-                    html="escape",
-                ),
-                mock.call("www.gov.uk", {}, html="escape", redact_missing_personalisation=False),
-                mock.call("subject", {}, html="escape", redact_missing_personalisation=False),
-                mock.call("content", {}, html="escape", markdown_lists=True, redact_missing_personalisation=False),
-            ],
-        ),
-        (
             EmailPreviewTemplate,
             "email",
             {"redact_missing_personalisation": True},
@@ -1826,15 +1302,6 @@ def test_is_message_empty_email_and_letter_templates_tries_not_to_count_chars(
         (
             SMSPreviewTemplate,
             "sms",
-            {"redact_missing_personalisation": True},
-            [
-                mock.call("((phone number))", {}, with_brackets=False, html="escape"),
-                mock.call("content", {}, html="escape", redact_missing_personalisation=True),
-            ],
-        ),
-        (
-            BroadcastPreviewTemplate,
-            "broadcast",
             {"redact_missing_personalisation": True},
             [
                 mock.call("((phone number))", {}, with_brackets=False, html="escape"),
@@ -1960,22 +1427,6 @@ def test_templates_handle_html_and_redacting(
             ],
         ),
         (
-            BroadcastMessageTemplate,
-            "broadcast",
-            {},
-            [
-                mock.call("content"),
-            ],
-        ),
-        (
-            BroadcastPreviewTemplate,
-            "broadcast",
-            {},
-            [
-                mock.call("content"),
-            ],
-        ),
-        (
             LetterPreviewTemplate,
             "letter",
             {"contact_block": "www.gov.uk"},
@@ -2051,8 +1502,6 @@ def test_templates_remove_whitespace_before_punctuation(
         (SMSMessageTemplate, "sms", {}, []),
         (SMSPreviewTemplate, "sms", {}, []),
         (SMSBodyPreviewTemplate, "sms", {}, []),
-        (BroadcastMessageTemplate, "broadcast", {}, []),
-        (BroadcastPreviewTemplate, "broadcast", {}, []),
         (
             LetterPreviewTemplate,
             "letter",
@@ -2153,18 +1602,6 @@ def test_smart_quotes_removed_from_long_template_in_under_a_second():
             ["content"],
         ),
         (
-            BroadcastMessageTemplate(
-                {"content": "((content))", "subject": "((subject))", "template_type": "broadcast"},
-            ),
-            ["content"],
-        ),
-        (
-            BroadcastPreviewTemplate(
-                {"content": "((content))", "subject": "((subject))", "template_type": "broadcast"},
-            ),
-            ["content"],
-        ),
-        (
             PlainTextEmailTemplate(
                 {"content": "((content))", "subject": "((subject))", "template_type": "email"},
             ),
@@ -2186,15 +1623,6 @@ def test_smart_quotes_removed_from_long_template_in_under_a_second():
             LetterPreviewTemplate(
                 {"content": "((content))", "subject": "((subject))", "template_type": "letter"},
                 contact_block="((contact_block))",
-            ),
-            ["contact_block", "subject", "content"],
-        ),
-        (
-            LetterImageTemplate(
-                {"content": "((content))", "subject": "((subject))", "template_type": "letter"},
-                contact_block="((contact_block))",
-                image_url="http://example.com",
-                page_count=99,
             ),
             ["contact_block", "subject", "content"],
         ),
@@ -2223,10 +1651,6 @@ def test_html_template_can_inject_personalisation_with_special_characters():
     "extra_args",
     [
         {"from_name": "Example service"},
-        {
-            "from_name": "Example service",
-            "from_address": "test@example.com",
-        },
         pytest.param({}, marks=pytest.mark.xfail),
     ],
 )
@@ -2236,14 +1660,11 @@ def test_email_preview_shows_from_name(extra_args):
     )
     assert '<th scope="row">From</th>' in str(template)
     assert "Example service" in str(template)
-    assert "test@example.com" not in str(template)
 
 
 def test_email_preview_escapes_html_in_from_name():
     template = EmailPreviewTemplate(
-        {"content": "content", "subject": "subject", "template_type": "email"},
-        from_name='<script>alert("")</script>',
-        from_address="test@example.com",
+        {"content": "content", "subject": "subject", "template_type": "email"}, from_name='<script>alert("")</script>'
     )
     assert "<script>" not in str(template)
     assert '&lt;script&gt;alert("")&lt;/script&gt;' in str(template)
@@ -2461,33 +1882,12 @@ def test_message_is_not_too_long_ignoring_prefix(template_class):
 
 
 @pytest.mark.parametrize(
-    "extra_characters, expected_too_long",
-    (
-        ("cc", True),  # content length is 919 characters (more than limit of 918)
-        ("c", False),  # content length is 918 characters (not more than limit of 918)
-    ),
-)
-@pytest.mark.parametrize(
-    "template_class",
-    [
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ],
-)
-def test_broadcast_message_too_long(template_class, extra_characters, expected_too_long):
-    body = ("b" * 917) + "((foo))"
-    template = template_class({"content": body, "template_type": "broadcast"}, values={"foo": extra_characters})
-    assert template.is_message_too_long() is expected_too_long
-
-
-@pytest.mark.parametrize(
     "template_class, template_type, kwargs",
     [
         (EmailPreviewTemplate, "email", {}),
         (HTMLEmailTemplate, "email", {}),
         (PlainTextEmailTemplate, "email", {}),
         (LetterPreviewTemplate, "letter", {}),
-        (LetterImageTemplate, "letter", {"image_url": "foo", "page_count": 1}),
     ],
 )
 def test_message_too_long_limit_bigger_or_nonexistent_for_non_sms_templates(template_class, template_type, kwargs):
@@ -2591,7 +1991,6 @@ def test_multiple_newlines_in_letters(
     ],
 )
 def test_whitespace_in_subjects(template_class, template_type, subject, extra_args):
-
     template_instance = template_class(
         {"content": "foo", "subject": subject, "template_type": template_type}, **extra_args
     )
@@ -2634,7 +2033,6 @@ def test_whitespace_in_subject_placeholders(template_class):
     ],
 )
 def test_govuk_email_whitespace_hack(template_class, expected_output):
-
     template_instance = template_class(
         {
             "content": "paragraph one\n\n&nbsp;\n\nparagraph two",
@@ -2668,7 +2066,6 @@ def test_letter_preview_uses_non_breaking_hyphens():
 
 @freeze_time("2001-01-01 12:00:00.000000")
 def test_nested_lists_in_lettr_markup():
-
     template_content = str(
         LetterPreviewTemplate(
             {
@@ -2792,12 +2189,12 @@ def test_plain_text_email_whitespace():
         (
             LetterPreviewTemplate,
             "letter",
-            ("<h2>Heading link: <strong data‑original‑protocol='https://'>example.com</strong></h2>"),
+            ("<h2>Heading [link](https://example.com)</h2>"),
         ),
         (
             LetterPrintTemplate,
             "letter",
-            ("<h2>Heading link: <strong data‑original‑protocol='https://'>example.com</strong></h2>"),
+            ("<h2>Heading [link](https://example.com)</h2>"),
         ),
     ),
 )
@@ -2882,27 +2279,6 @@ def test_image_not_present_if_no_logo(template_class):
                 "</div>"
             ),
         ),
-        (
-            BroadcastPreviewTemplate,
-            (
-                '<div class="broadcast-message-wrapper">\n'
-                '  <h2 class="broadcast-message-heading">\n'
-                '    <svg class="broadcast-message-heading__icon" '
-                'xmlns="http://www.w3.org/2000/svg" width="22" height="18.23" '
-                'viewBox="0 0 17.5 14.5" aria-hidden="true">\n'
-                '      <path fill-rule="evenodd"\n'
-                '            fill="currentcolor"\n'
-                '            d="M8.6 0L0 14.5h17.5L8.6 0zm.2 10.3c-.8 0-1.5.7-1.5 1.5s.7 1.5 1.5 1.5 1.5-.7 '
-                "1.5-1.5c-.1-.8-.7-1.5-1.5-1.5zm1.3-4.5c.1.8-.3 3.2-.3 3.2h-2s-.5-2.3-.5-3c0 0 0-1.6 1.4-1.6s1.4 "
-                '1.4 1.4 1.4z"\n'
-                "      />\n"
-                "    </svg>\n"
-                "    Emergency alert\n"
-                "  </h2>\n"
-                "  The quick brown fox.<br><br>Jumps over the lazy dog.<br>Single linebreak above.\n"
-                "</div>"
-            ),
-        ),
     ),
 )
 def test_text_messages_collapse_consecutive_whitespace(
@@ -2910,7 +2286,7 @@ def test_text_messages_collapse_consecutive_whitespace(
     content,
     expected,
 ):
-    template = template_class({"content": content, "template_type": template_class.template_type})
+    template = template_class({"content": content, "template_type": "sms"})
     assert str(template) == expected
     assert (
         template.content_count
@@ -2919,235 +2295,27 @@ def test_text_messages_collapse_consecutive_whitespace(
     )
 
 
-def test_letter_preview_template_lazy_loads_images():
-    page = BeautifulSoup(
-        str(
-            LetterImageTemplate(
-                {"content": "Content", "subject": "Subject", "template_type": "letter"},
-                image_url="http://example.com/endpoint.png",
-                page_count=3,
-            )
-        ),
-        "html.parser",
-    )
-    assert [(img["src"], img["loading"]) for img in page.select("img")] == [
-        ("http://example.com/endpoint.png?page=1", "eager"),
-        ("http://example.com/endpoint.png?page=2", "lazy"),
-        ("http://example.com/endpoint.png?page=3", "lazy"),
-    ]
-
-
-def test_broadcast_message_from_content():
-    template = BroadcastMessageTemplate.from_content("test content")
-
-    assert isinstance(template, BroadcastMessageTemplate)
-    assert str(template) == "test content"
-
-
-def test_broadcast_message_from_event():
-    event = {
-        "transmitted_content": {"body": "test content"},
-    }
-    template = BroadcastMessageTemplate.from_event(event)
-
-    assert isinstance(template, BroadcastMessageTemplate)
-    assert str(template) == "test content"
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
-@pytest.mark.parametrize(
-    "content, expected_non_gsm, expected_max, expected_too_long",
-    (
-        (
-            "a" * 1395,
-            set(),
-            1395,
-            False,
-        ),
-        (
-            "a" * 1396,
-            set(),
-            1395,
-            True,
-        ),
-        (
-            "ŵ" * 615,
-            {"ŵ"},
-            615,
-            False,
-        ),
-        (
-            # Using a non-GSM character reduces the max content count
-            "ŵ" * 616,
-            {"ŵ"},
-            615,
-            True,
-        ),
-        (
-            "[" * 697,  # Half of 1395, rounded down
-            set(),
-            1395,
-            False,
-        ),
-        (
-            "[" * 698,  # Half of 1395, rounded up
-            set(),
-            1395,
-            True,
-        ),
-        (
-            # In USC2 extended GSM characters are not double counted
-            "ŵ]" * 307,
-            {"ŵ"},
-            615,
-            False,
-        ),
-    ),
-)
-def test_broadcast_message_content_count(content, expected_non_gsm, expected_max, expected_too_long, template_class):
-    template = template_class(
-        {
-            "template_type": "broadcast",
-            "content": content,
-        }
-    )
-    assert template.non_gsm_characters == expected_non_gsm
-    assert template.max_content_count == expected_max
-    assert template.content_too_long is expected_too_long
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
-@pytest.mark.parametrize("content", ("^{}\\[~]|€"))
-def test_broadcast_message_double_counts_extended_gsm(
-    content,
-    template_class,
-):
-    template = template_class(
-        {
-            "template_type": "broadcast",
-            "content": content,
-        }
-    )
-    assert template.encoded_content_count == 2
-    assert template.max_content_count == 1_395
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
-@pytest.mark.parametrize("content", ("ÁÍÓÚẂÝ" "ËÏẄŸ" "ÂÊÎÔÛŴŶ" "ÀÈÌÒẀÙỲ" "áíóúẃý" "ëïẅÿ" "âêîôûŵŷ" "ẁỳ"))
-def test_broadcast_message_single_counts_diacritics_in_extended_gsm(
-    content,
-    template_class,
-):
-    template = template_class(
-        {
-            "template_type": "broadcast",
-            "content": content,
-        }
-    )
-    assert template.encoded_content_count == 1
-    assert template.max_content_count == 615
-
-
-@pytest.mark.parametrize(
-    "template_class",
-    (
-        BroadcastMessageTemplate,
-        BroadcastPreviewTemplate,
-    ),
-)
-@pytest.mark.parametrize("content", ("ÄÖÜ" "É" "äöü" "é" "àèìòù"))
-def test_broadcast_message_single_counts_diacritics_in_gsm(
-    content,
-    template_class,
-):
-    template = template_class(
-        {
-            "template_type": "broadcast",
-            "content": content,
-        }
-    )
-    assert template.encoded_content_count == 1
-    assert template.max_content_count == 1_395
-
-
-def test_letter_image_template_marks_first_page_of_attachment():
-    class Attachment:
-        page_count = 3
-
-    class LetterImageTemplateWithAttachment(LetterImageTemplate):
-        attachment = Attachment()
-        page_count = 8
-
-    template = BeautifulSoup(
-        str(
-            LetterImageTemplateWithAttachment(
-                {"content": "Content", "subject": "Subject", "template_type": "letter"},
-                image_url="http://example.com/endpoint.png",
-            )
-        ),
-        features="html.parser",
-    )
-
-    assert [str(element) for element in template.select(".letter *")] == [
-        '<img alt="" loading="eager" src="http://example.com/endpoint.png?page=1"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=2"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=3"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=4"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=5"/>',
-        '<div id="first-page-of-attachment"></div>',
-        '<img alt="" loading="eager" src="http://example.com/endpoint.png?page=6"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=7"/>',
-        '<img alt="" loading="lazy" src="http://example.com/endpoint.png?page=8"/>',
-    ]
-
-
 @pytest.mark.parametrize(
     "template_class, template_data, expect_content",
     (
         (
             LetterPreviewTemplate,
             {"template_type": "letter", "subject": "foo", "content": "[Example](((var)))"},
-            (
-                "<p>Example: "
-                "<strong data‑original‑protocol=''><span class='placeholder'>&#40;&#40;var&#41;&#41;</span></strong>"
-                "</p>"
-            ),
+            ("<p>[Example](<span class='placeholder'>&#40;&#40;var&#41;&#41;</span>)</p>"),
         ),
         (
             LetterPreviewTemplate,
             {"template_type": "letter", "subject": "foo", "content": "[Example](https://blah.blah/?query=((var)))"},
             (
-                "<p>Example: "
-                "<strong data‑original‑protocol='https://'>blah.blah/?query=<span class='placeholder'>&#40;&#40;var&#41;&#41;</span></strong>"  # noqa
+                "<p>[Example]"
+                "(https://blah.blah/?query=<span class='placeholder'>&#40;&#40;var&#41;&#41;</span>)"
                 "</p>"
             ),
         ),
         (
             LetterPreviewTemplate,
             {"template_type": "letter", "subject": "foo", "content": "[Example](pre((var))post)"},
-            (
-                "<p>Example: "
-                "<strong data‑original‑protocol=''>pre<span class='placeholder'>&#40;&#40;var&#41;&#41;</span>post</strong>"  # noqa
-                "</p>"
-            ),
+            ("<p>[Example](pre<span class='placeholder'>&#40;&#40;var&#41;&#41;</span>post)</p>"),
         ),
         (
             LetterPreviewTemplate,
@@ -3255,3 +2423,21 @@ def test_letter_qr_codes_with_too_much_data(content, values, should_error):
         assert error.num_bytes == 700
     else:
         assert error is None
+
+
+@pytest.mark.parametrize(
+    "extra_template_kwargs, should_have_notify_tag",
+    (
+        ({}, True),
+        ({"include_notify_tag": True}, True),
+        ({"include_notify_tag": False}, False),
+    ),
+)
+def test_rendered_letter_template_for_print_can_toggle_notify_tag_and_always_hides_barcodes(
+    extra_template_kwargs, should_have_notify_tag
+):
+    template = LetterPrintTemplate(
+        {"template_type": "letter", "subject": "subject", "content": "content"}, {}, **extra_template_kwargs
+    )
+    assert ("content: 'NOTIFY';" in str(template)) == should_have_notify_tag
+    assert "#mdi,\n  #barcode,\n  #qrcode {\n    display: none;\n  }" in str(template).strip()

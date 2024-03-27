@@ -4,24 +4,23 @@ from datetime import datetime
 from functools import lru_cache
 from html import unescape
 from os import path
-from typing import Optional
+from typing import Literal, Optional
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
 from notifications_utils import (
+    ENGLISH_TO_WELSH_MONTHS,
     LETTER_MAX_PAGE_COUNT,
     MAGIC_SEQUENCE,
     SMS_CHAR_COUNT_LIMIT,
 )
-from notifications_utils.countries.data import Postage
 from notifications_utils.field import Field, PlainTextField
 from notifications_utils.formatters import (
     add_prefix,
     add_trailing_newline,
     autolink_urls,
     escape_html,
-    formatted_list,
     make_quotes_smart,
     nl2br,
     normalise_multiple_newlines,
@@ -79,6 +78,7 @@ class Template(ABC):
         self.id = template.get("id", None)
         self.name = template.get("name", None)
         self.content = template["content"]
+        self.welsh_content = template.get("letter_welsh_content", None)
         self.values = values
         self._template = template
         self.redact_missing_personalisation = redact_missing_personalisation
@@ -121,7 +121,12 @@ class Template(ABC):
 
     @property
     def placeholders(self):
-        return get_placeholders(self.content)
+        welsh = set()
+        if self.welsh_content:
+            welsh = get_placeholders(self.welsh_content)
+        english = get_placeholders(self.content)
+        all = welsh | english
+        return all
 
     @property
     def missing_data(self):
@@ -142,7 +147,6 @@ class Template(ABC):
         return len(self.content_with_placeholders_filled_in)
 
     def is_message_empty(self):
-
         if not self.content:
             return True
 
@@ -159,7 +163,6 @@ class Template(ABC):
 
 
 class BaseSMSTemplate(Template):
-
     template_type = "sms"
 
     def __init__(
@@ -182,7 +185,6 @@ class BaseSMSTemplate(Template):
 
     @values.setter
     def values(self, value):
-
         # If we change the values of the template it’s possible the
         # content count will have changed, so we need to reset the
         # cached count.
@@ -289,7 +291,6 @@ class SMSBodyPreviewTemplate(BaseSMSTemplate):
         super().__init__(template, values, show_prefix=False)
 
     def __str__(self):
-
         return Markup(
             Take(
                 Field(
@@ -308,7 +309,6 @@ class SMSBodyPreviewTemplate(BaseSMSTemplate):
 
 
 class SMSPreviewTemplate(BaseSMSTemplate):
-
     jinja_template = template_env.get_template("sms_preview_template.jinja2")
 
     def __init__(
@@ -330,7 +330,6 @@ class SMSPreviewTemplate(BaseSMSTemplate):
         self.redact_missing_personalisation = redact_missing_personalisation
 
     def __str__(self):
-
         return Markup(
             self.jinja_template.render(
                 {
@@ -361,74 +360,17 @@ class SMSPreviewTemplate(BaseSMSTemplate):
         )
 
 
-class BaseBroadcastTemplate(BaseSMSTemplate):
-    template_type = "broadcast"
-
-    MAX_CONTENT_COUNT_GSM = 1_395
-    MAX_CONTENT_COUNT_UCS2 = 615
-
-    @property
-    def encoded_content_count(self):
-        if self.non_gsm_characters:
-            return self.content_count
-        return self.content_count + count_extended_gsm_chars(self.content_with_placeholders_filled_in)
-
-    @property
-    def non_gsm_characters(self):
-        return non_gsm_characters(self.content)
-
-    @property
-    def max_content_count(self):
-        if self.non_gsm_characters:
-            return self.MAX_CONTENT_COUNT_UCS2
-        return self.MAX_CONTENT_COUNT_GSM
-
-    @property
-    def content_too_long(self):
-        return self.encoded_content_count > self.max_content_count
-
-
-class BroadcastPreviewTemplate(BaseBroadcastTemplate, SMSPreviewTemplate):
-    jinja_template = template_env.get_template("broadcast_preview_template.jinja2")
-
-
-class BroadcastMessageTemplate(BaseBroadcastTemplate, SMSMessageTemplate):
-    @classmethod
-    def from_content(cls, content):
-        return cls(
-            template={
-                "template_type": cls.template_type,
-                "content": content,
-            },
-            values=None,  # events have already done interpolation of any personalisation
-        )
-
-    @classmethod
-    def from_event(cls, broadcast_event):
-        """
-        should be directly callable with the results of the BroadcastEvent.serialize() function from api/models.py
-        """
-        return cls.from_content(broadcast_event["transmitted_content"]["body"])
-
-    def __str__(self):
-        return (
-            Take(
-                Field(
-                    self.content.strip(),
-                    self.values,
-                    html="escape",
-                )
-            )
-            .then(sms_encode)
-            .then(remove_whitespace_before_punctuation)
-            .then(normalise_whitespace_and_newlines)
-            .then(normalise_multiple_newlines)
-        )
-
-
 class SubjectMixin:
-    def __init__(self, template, values=None, **kwargs):
-        self._subject = template["subject"]
+    def __init__(self, template, values=None, language: Literal["english", "welsh"] = "english", **kwargs):
+        welsh_subject = template.get("letter_welsh_subject", "")
+
+        if language == "english":
+            self._subject = template["subject"]
+        else:
+            self._subject = welsh_subject
+
+        self._welsh_subject = welsh_subject
+
         super().__init__(template, values, **kwargs)
 
     @property
@@ -448,7 +390,13 @@ class SubjectMixin:
 
     @property
     def placeholders(self):
-        return get_placeholders(self._subject) | super().placeholders
+        welsh = set()
+        if self._welsh_subject:
+            welsh = get_placeholders(self._welsh_subject)
+        english = get_placeholders(self._subject)
+        all = welsh | english
+
+        return all | super().placeholders
 
 
 class BaseEmailTemplate(SubjectMixin, Template):
@@ -542,7 +490,6 @@ class PlainTextEmailTemplate(BaseEmailTemplate):
 
 
 class HTMLEmailTemplate(BaseEmailTemplate):
-
     jinja_template = template_env.get_template("email_template.jinja2")
 
     PREHEADER_LENGTH_IN_CHARACTERS = 256
@@ -588,7 +535,6 @@ class HTMLEmailTemplate(BaseEmailTemplate):
         )[: self.PREHEADER_LENGTH_IN_CHARACTERS].strip()
 
     def __str__(self):
-
         return self.jinja_template.render(
             {
                 "subject": self.subject,
@@ -606,7 +552,6 @@ class HTMLEmailTemplate(BaseEmailTemplate):
 
 
 class EmailPreviewTemplate(BaseEmailTemplate):
-
     jinja_template = template_env.get_template("email_preview_template.jinja2")
 
     def __init__(
@@ -614,14 +559,12 @@ class EmailPreviewTemplate(BaseEmailTemplate):
         template,
         values=None,
         from_name=None,
-        from_address=None,
         reply_to=None,
         show_recipient=True,
         redact_missing_personalisation=False,
     ):
         super().__init__(template, values, redact_missing_personalisation=redact_missing_personalisation)
         self.from_name = from_name
-        self.from_address = from_address
         self.reply_to = reply_to
         self.show_recipient = show_recipient
 
@@ -632,7 +575,6 @@ class EmailPreviewTemplate(BaseEmailTemplate):
                     "body": self.html_body,
                     "subject": self.subject,
                     "from_name": escape_html(self.from_name),
-                    "from_address": self.from_address,
                     "reply_to": self.reply_to,
                     "recipient": Field("((email address))", self.values, with_brackets=False),
                     "show_recipient": self.show_recipient,
@@ -657,7 +599,6 @@ class EmailPreviewTemplate(BaseEmailTemplate):
 
 
 class BaseLetterTemplate(SubjectMixin, Template):
-
     template_type = "letter"
     max_page_count = LETTER_MAX_PAGE_COUNT
     max_sheet_count = LETTER_MAX_PAGE_COUNT // 2
@@ -673,12 +614,20 @@ class BaseLetterTemplate(SubjectMixin, Template):
         logo_file_name=None,
         redact_missing_personalisation=False,
         date=None,
+        language="english",
     ):
         self.contact_block = (contact_block or "").strip()
-        super().__init__(template, values, redact_missing_personalisation=redact_missing_personalisation)
+        super().__init__(
+            template, values, redact_missing_personalisation=redact_missing_personalisation, language=language
+        )
         self.admin_base_url = admin_base_url
         self.logo_file_name = logo_file_name
         self.date = date or datetime.utcnow()
+        self.language = language
+        if language == "english":
+            self.content = template["content"]
+        else:
+            self.content = template.get("letter_welsh_content", "")
 
     @property
     def subject(self):
@@ -718,7 +667,6 @@ class BaseLetterTemplate(SubjectMixin, Template):
 
     @property
     def _address_block(self):
-
         if self.postal_address.has_enough_lines and not self.postal_address.has_too_many_lines:
             return self.postal_address.normalised_lines
 
@@ -749,7 +697,10 @@ class BaseLetterTemplate(SubjectMixin, Template):
 
     @property
     def _date(self):
-        return self.date.strftime("%-d %B %Y")
+        month = self.date.strftime("%B")
+        if self.language == "welsh":
+            month = ENGLISH_TO_WELSH_MONTHS[month]
+        return self.date.strftime(f"%-d {month} %Y")
 
     @property
     def _personalised_content(self) -> Field:
@@ -774,133 +725,57 @@ class BaseLetterTemplate(SubjectMixin, Template):
 
 
 class LetterPreviewTemplate(BaseLetterTemplate):
-
     jinja_template = template_env.get_template("letter_pdf/preview.jinja2")
 
+    @property
+    def render_params(self):
+        return {
+            "admin_base_url": self.admin_base_url,
+            "logo_file_name": self.logo_file_name,
+            # logo_class should only ever be None, svg or png
+            "logo_class": self.logo_file_name.lower()[-3:] if self.logo_file_name else None,
+            "subject": self.subject,
+            "message": self._message,
+            "address": self._address_block,
+            "contact_block": self._contact_block,
+            "date": self._date,
+            "language": self.language,
+        }
+
     def __str__(self):
-        return Markup(
-            self.jinja_template.render(
-                {
-                    "admin_base_url": self.admin_base_url,
-                    "logo_file_name": self.logo_file_name,
-                    # logo_class should only ever be None, svg or png
-                    "logo_class": self.logo_file_name.lower()[-3:] if self.logo_file_name else None,
-                    "subject": self.subject,
-                    "message": self._message,
-                    "address": self._address_block,
-                    "contact_block": self._contact_block,
-                    "date": self._date,
-                }
-            )
-        )
+        return Markup(self.jinja_template.render(self.render_params))
 
 
 class LetterPrintTemplate(LetterPreviewTemplate):
-
     jinja_template = template_env.get_template("letter_pdf/print.jinja2")
-
-
-class LetterImageTemplate(BaseLetterTemplate):
-
-    jinja_template = template_env.get_template("letter_image_template.jinja2")
-    first_page_number = 1
-    allowed_postage_types = (
-        Postage.FIRST,
-        Postage.SECOND,
-        Postage.EUROPE,
-        Postage.REST_OF_WORLD,
-    )
 
     def __init__(
         self,
         template,
         values=None,
-        image_url=None,
-        page_count=None,
         contact_block=None,
+        admin_base_url="http://localhost:6012",
+        logo_file_name=None,
+        redact_missing_personalisation=False,
+        date=None,
+        language="english",
+        include_notify_tag: bool = True,
     ):
-        super().__init__(template, values, contact_block=contact_block)
-        self.image_url = image_url
-        self._page_count = page_count
-        self.postage = template.get("postage")
-
-    @property
-    def page_count(self):
-        return self._page_count
-
-    @property
-    def postage(self):
-        if self.postal_address.international:
-            return self.postal_address.postage
-        return self._postage
-
-    @postage.setter
-    def postage(self, value):
-        if value not in [None] + list(self.allowed_postage_types):
-            raise TypeError(
-                "postage must be None, {}".format(
-                    formatted_list(
-                        self.allowed_postage_types,
-                        conjunction="or",
-                        before_each="'",
-                        after_each="'",
-                    )
-                )
-            )
-        self._postage = value
-
-    @property
-    def last_page_number(self):
-        return min(self.page_count, self.max_page_count) + self.first_page_number
-
-    @property
-    def page_numbers(self):
-        return list(range(self.first_page_number, self.last_page_number))
-
-    @property
-    def postage_description(self):
-        return {
-            Postage.FIRST: "first class",
-            Postage.SECOND: "second class",
-            Postage.EUROPE: "international",
-            Postage.REST_OF_WORLD: "international",
-        }.get(self.postage)
-
-    @property
-    def postage_class_value(self):
-        return {
-            Postage.FIRST: "letter-postage-first",
-            Postage.SECOND: "letter-postage-second",
-            Postage.EUROPE: "letter-postage-international",
-            Postage.REST_OF_WORLD: "letter-postage-international",
-        }.get(self.postage)
-
-    @property
-    def first_page_of_attachment(self):
-        if getattr(self, "attachment", None):
-            return self.page_count - self.attachment.page_count + 1
-
-    def __str__(self):
-        for attr in ("page_count", "image_url"):
-            if not getattr(self, attr):
-                raise TypeError(f"{attr} is required to render {type(self).__name__}")
-        return Markup(
-            self.jinja_template.render(
-                {
-                    "image_url": self.image_url,
-                    "page_numbers": self.page_numbers,
-                    "first_page_of_attachment": self.first_page_of_attachment,
-                    "address": self._address_block,
-                    "contact_block": self._contact_block,
-                    "date": self._date,
-                    "subject": self.subject,
-                    "message": self._message,
-                    "show_postage": bool(self.postage),
-                    "postage_description": self.postage_description,
-                    "postage_class_value": self.postage_class_value,
-                }
-            )
+        super().__init__(
+            template,
+            values=values,
+            contact_block=contact_block,
+            admin_base_url=admin_base_url,
+            logo_file_name=logo_file_name,
+            redact_missing_personalisation=redact_missing_personalisation,
+            date=date,
+            language=language,
         )
+        self.include_notify_tag = include_notify_tag
+
+    @property
+    def render_params(self):
+        return super().render_params | {"include_notify_tag": self.include_notify_tag}
 
 
 def get_sms_fragment_count(character_count, non_gsm_characters):

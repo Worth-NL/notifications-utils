@@ -72,7 +72,8 @@ def test_get_unicode_char_from_codepoint_rejects_bad_input(bad_input):
 @pytest.mark.parametrize(
     "content, expected",
     [
-        ("Łōdź", "?odz"),
+        ("Łōdź", "Lodz"),
+        ("It Just Works™", "It Just Works?"),
         ("The quick brown fox jumps over the lazy dog", "The quick brown fox jumps over the lazy dog"),
     ],
 )
@@ -90,7 +91,7 @@ def test_encode_string(content, expected):
         ("Ŵêlsh chârâctêrs ârê cômpâtîblê wîth SanitiseSMS", SanitiseSMS, set()),
         ("Lots of GSM chars that arent ascii compatible:\n\r€", SanitiseSMS, set()),
         ("Lots of GSM chars that arent ascii compatible:\n\r€", SanitiseASCII, {"\n", "\r", "€"}),
-        ("Obscure\u00A0whitespace\u202Fcharacters which we normalise o\u180Eut", SanitiseSMS, set()),
+        ("Obscure\u00A0whitespace\u202Fcharacters which \u2028we \u2029normalise o\u180Eut", SanitiseSMS, set()),
     ],
 )
 def test_sms_encoding_get_non_compatible_characters(content, cls, expected):

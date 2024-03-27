@@ -1,3 +1,6 @@
+from itertools import chain
+from random import SystemRandom
+
 from flask import abort, current_app, request
 from flask.wrappers import Request
 
@@ -8,6 +11,9 @@ class NotifyRequest(Request):
     as described here: https://docs.cloudfoundry.org/concepts/http-routing.html#zipkin-headers
     """
 
+    # a single class-wide random instance should be good enough for now
+    _spanid_random = _traceid_random = SystemRandom()
+
     @property
     def request_id(self):
         return self.trace_id
@@ -15,23 +21,37 @@ class NotifyRequest(Request):
     @property
     def trace_id(self):
         """
-        The "trace id" (in zipkin terms) assigned to this request, if present (None otherwise)
+        The "trace id" (in zipkin terms) assigned to this request. If not present, will
+        generate its own.
         """
         if not hasattr(self, "_trace_id"):
-            self._trace_id = self._get_header_value(current_app.config["NOTIFY_TRACE_ID_HEADER"])
+            self._trace_id = (
+                self._get_first_header(
+                    chain(
+                        (current_app.config["NOTIFY_TRACE_ID_HEADER"],),
+                        current_app.config["NOTIFY_TRACE_ID_ALT_HEADERS"],
+                    )
+                )
+                or self._get_new_trace_id()
+            )
         return self._trace_id
 
     @property
     def span_id(self):
         """
-        The "span id" (in zipkin terms) set in this request's header, if present (None otherwise)
+        The "span id" (in zipkin terms) set in this request's header. If not present, will
+        generate its own prefixed with "self-".
         """
         if not hasattr(self, "_span_id"):
-            # note how we don't generate an id of our own. not being supplied a span id implies that we are running in
-            # an environment with no span-id-aware request router, and thus would have no intermediary to prevent the
-            # propagation of our span id all the way through all our onwards requests much like trace id. and the point
-            # of span id is to assign identifiers to each individual request.
-            self._span_id = self._get_header_value(current_app.config["NOTIFY_SPAN_ID_HEADER"])
+            self._span_id = (
+                self._get_first_header(
+                    chain(
+                        (current_app.config["NOTIFY_SPAN_ID_HEADER"],),
+                        current_app.config["NOTIFY_SPAN_ID_ALT_HEADERS"],
+                    )
+                )
+                or f"self-{self._get_new_span_id()}"
+            )
         return self._span_id
 
     @property
@@ -40,7 +60,12 @@ class NotifyRequest(Request):
         The "parent span id" (in zipkin terms) set in this request's header, if present (None otherwise)
         """
         if not hasattr(self, "_parent_span_id"):
-            self._parent_span_id = self._get_header_value(current_app.config["NOTIFY_PARENT_SPAN_ID_HEADER"])
+            self._parent_span_id = self._get_first_header(
+                chain(
+                    (current_app.config["NOTIFY_PARENT_SPAN_ID_HEADER"],),
+                    current_app.config["NOTIFY_PARENT_SPAN_ID_ALT_HEADERS"],
+                )
+            )
         return self._parent_span_id
 
     def _get_header_value(self, header_name):
@@ -51,6 +76,40 @@ class NotifyRequest(Request):
             return self.headers[header_name]
 
         return None
+
+    def _get_first_header(self, header_names):
+        """
+        Returns value of request's first present (and Truthy) header from header_names
+        """
+        for header_name in header_names:
+            if header_name in self.headers and self.headers[header_name]:
+                return self.headers[header_name]
+        else:
+            return None
+
+    def _get_new_trace_id(self):
+        "Generate a random zipkin-compliant trace id"
+        bitlen = 128
+        return hex(self._traceid_random.randrange(1 << bitlen))[2:].rjust(bitlen // 4, "0")
+
+    def _get_new_span_id(self):
+        "Generate a random zipkin-compliant span id"
+        bitlen = 64
+        return hex(self._spanid_random.randrange(1 << bitlen))[2:].rjust(bitlen // 4, "0")
+
+    def get_onwards_request_headers(self):
+        """
+        Headers to add to any further (internal) http api requests we perform if we want that request to be
+        considered part of this "trace id"
+        """
+        new_span_id = self._get_new_span_id()
+        return dict(
+            chain(
+                ((current_app.config["NOTIFY_TRACE_ID_HEADER"], self.trace_id),) if self.trace_id else (),
+                ((current_app.config["NOTIFY_SPAN_ID_HEADER"], new_span_id),) if self.trace_id else (),
+                ((current_app.config["NOTIFY_PARENT_SPAN_ID_HEADER"], self.span_id),) if self.span_id else (),
+            )
+        )
 
 
 class ResponseHeaderMiddleware(object):
@@ -76,8 +135,17 @@ class ResponseHeaderMiddleware(object):
 
 def init_app(app):
     app.config.setdefault("NOTIFY_TRACE_ID_HEADER", "X-B3-TraceId")
+    app.config.setdefault(
+        "NOTIFY_TRACE_ID_ALT_HEADERS",
+        (
+            "X-Amz-Cf-Id",  # from cloudfront
+            "X-Amzn-Trace-Id",  # from load balancer
+        ),
+    )
     app.config.setdefault("NOTIFY_SPAN_ID_HEADER", "X-B3-SpanId")
+    app.config.setdefault("NOTIFY_SPAN_ID_ALT_HEADERS", ())
     app.config.setdefault("NOTIFY_PARENT_SPAN_ID_HEADER", "X-B3-ParentSpanId")
+    app.config.setdefault("NOTIFY_PARENT_SPAN_ID_ALT_HEADERS", ())
 
     app.request_class = NotifyRequest
     app.wsgi_app = ResponseHeaderMiddleware(

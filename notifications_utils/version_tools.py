@@ -20,7 +20,6 @@ class color:
 
 
 def upgrade_version():
-
     current_version = get_app_version()
     newest_version = get_remote_version()
 
@@ -61,10 +60,13 @@ def write_version_to_requirements_file(version):
 
 
 def get_relevant_changelog_lines(current_version, newest_version):
-
     old_changelog, new_changelog = (
         get_file_contents_from_github(version, "CHANGELOG.md") for version in (current_version, newest_version)
     )
+
+    # Insert a space before `##` so that if copy/pasted into a git commit message, they aren't considered comments (by
+    # eg vim), but still render as markdown the same way (as headings).
+    new_changelog = new_changelog.replace("\n##", "\n ##")
 
     lines_added = new_changelog.count("\n") - old_changelog.count("\n")
     header_lines = new_changelog.split("##")[0].count("\n")
