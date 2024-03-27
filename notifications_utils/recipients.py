@@ -557,16 +557,14 @@ def use_numeric_sender(number):
 def validate_uk_phone_number(number):
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
-    if not number.startswith("7"):
-        raise InvalidPhoneError(
-            "This does not look like a UK mobile number – double check the mobile number you entered"
-        )
+    if not number.startswith("+31"):
+        raise InvalidPhoneError("Please enter mobile number according to the expected format")
 
-    if len(number) > 10:
-        raise InvalidPhoneError("Mobile number is too long")
+    if len(number) > 11:
+        raise InvalidPhoneError("Too many digits")
 
-    if len(number) < 10:
-        raise InvalidPhoneError("Mobile number is too short")
+    if len(number) < 11:
+        raise InvalidPhoneError("Not enough digits")
 
     return f"{uk_prefix}{number}"
 
