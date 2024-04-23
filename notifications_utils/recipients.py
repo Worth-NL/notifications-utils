@@ -32,7 +32,7 @@ from notifications_utils.template import BaseLetterTemplate, Template
 from . import EMAIL_REGEX_PATTERN, hostname_part, tld_part
 from .qr_code import QrCodeTooLong
 
-uk_prefix = "31"  # TODO: yes, "uk_prefix" is confusing, needs to be reviewed as part of a bigger refactor for NL usage
+uk_prefix = "44"
 
 first_column_headings = {
     "email": ["email address"],
@@ -490,7 +490,7 @@ def normalise_phone_number(number):
     try:
         list(map(int, number))
     except ValueError as e:
-        raise InvalidPhoneError("Mobile numbers can only include: 0 1 2 3 4 5 6 7 8 9 ( ) + -") from e
+        raise InvalidPhoneError("Must not contain letters or symbols") from e
 
     return number.lstrip("0")
 
@@ -501,7 +501,7 @@ def is_uk_phone_number(number):
 
     number = normalise_phone_number(number)
 
-    if number.startswith(uk_prefix) or (number.startswith("6") and len(number) == 9):
+    if number.startswith(uk_prefix) or (number.startswith("7") and len(number) < 11):
         return True
 
     return False
@@ -557,13 +557,13 @@ def use_numeric_sender(number):
 def validate_uk_phone_number(number):
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
-    if not number.startswith("6"):
-        raise InvalidPhoneError("Not a Dutch mobile number")
+    if not number.startswith("7"):
+        raise InvalidPhoneError("Not a UK mobile number")
 
-    if len(number) > 9:
+    if len(number) > 10:
         raise InvalidPhoneError("Too many digits")
 
-    if len(number) < 9:
+    if len(number) < 10:
         raise InvalidPhoneError("Not enough digits")
 
     return f"{uk_prefix}{number}"
@@ -575,14 +575,14 @@ def validate_phone_number(number, international=False):
 
     number = normalise_phone_number(number)
 
-    if len(number) < 11:
+    if len(number) < 8:
         raise InvalidPhoneError("Not enough digits")
 
-    if len(number) > 11:
+    if len(number) > 15:
         raise InvalidPhoneError("Too many digits")
 
     if get_international_prefix(number) is None:
-        raise InvalidPhoneError("Country code not found - double check the mobile number you entered")
+        raise InvalidPhoneError("Not a valid country prefix")
 
     return number
 
