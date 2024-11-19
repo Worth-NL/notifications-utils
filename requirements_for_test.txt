@@ -15,3 +15,4 @@ redis>=4.3.4  # Earlier versions of redis miss features the tests need
 snakeviz==2.1.1
 black==23.10.1  # Also update `.pre-commit-config.yaml` if this changes
 ruff==0.0.272  # Also update `.pre-commit-config.yaml` if this changes
+urllib3>=2.2.2 # not directly required, pinned by Snyk to avoid a vulnerability
