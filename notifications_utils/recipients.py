@@ -7,9 +7,9 @@ from functools import lru_cache
 from io import StringIO
 from itertools import islice
 from typing import Optional, cast
-from deprecated import deprecated
 
 import phonenumbers
+from deprecated import deprecated
 from flask import current_app
 from ordered_set import OrderedSet
 
@@ -513,12 +513,12 @@ def is_uk_phone_number(number):
 def is_nl_phone_number(number):
     if number.startswith("0") and not number.startswith("00"):
         return True
-    
+
     number = normalise_phone_number(number)
 
     if number.startswith(nl_prefix) or (number.startswith("6") and len(number) < 10):
         return True
-    
+
     return False
 
 
@@ -590,13 +590,13 @@ def validate_nl_phone_number(number):
 
     if not number.startswith("6"):
         raise InvalidPhoneError("Not a dutch mobile number")
-    
+
     if len(number) > 9:
         raise InvalidPhoneError("Too many digits")
-    
+
     if len(number) < 9:
         raise InvalidPhoneError("Not enough digits")
-    
+
     return f"{nl_prefix}{number}"
 
 
