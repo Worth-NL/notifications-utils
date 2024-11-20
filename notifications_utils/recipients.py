@@ -7,6 +7,7 @@ from functools import lru_cache
 from io import StringIO
 from itertools import islice
 from typing import Optional, cast
+from deprecated import deprecated
 
 import phonenumbers
 from flask import current_app
@@ -33,6 +34,7 @@ from . import EMAIL_REGEX_PATTERN, hostname_part, tld_part
 from .qr_code import QrCodeTooLong
 
 uk_prefix = "44"
+nl_prefix = "31"
 
 first_column_headings = {
     "email": ["email address"],
@@ -495,6 +497,7 @@ def normalise_phone_number(number):
     return number.lstrip("0")
 
 
+@deprecated("Please use is_nl_phone_number()")
 def is_uk_phone_number(number):
     if number.startswith("0") and not number.startswith("00"):
         return True
@@ -504,6 +507,18 @@ def is_uk_phone_number(number):
     if number.startswith(uk_prefix) or (number.startswith("7") and len(number) < 11):
         return True
 
+    return False
+
+
+def is_nl_phone_number(number):
+    if number.startswith("0") and not number.startswith("00"):
+        return True
+    
+    number = normalise_phone_number(number)
+
+    if number.startswith(nl_prefix) or (number.startswith("6") and len(number) < 10):
+        return True
+    
     return False
 
 
@@ -554,6 +569,7 @@ def use_numeric_sender(number):
     return INTERNATIONAL_BILLING_RATES[prefix]["attributes"]["alpha"] == "NO"
 
 
+@deprecated("Please use validate_nl_phone_number()")
 def validate_uk_phone_number(number):
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
@@ -569,9 +585,24 @@ def validate_uk_phone_number(number):
     return f"{uk_prefix}{number}"
 
 
+def validate_nl_phone_number(number):
+    number = normalise_phone_number(number).lstrip(nl_prefix).lstrip("0")
+
+    if not number.startswith("6"):
+        raise InvalidPhoneError("Not a dutch mobile number")
+    
+    if len(number) > 9:
+        raise InvalidPhoneError("Too many digits")
+    
+    if len(number) < 9:
+        raise InvalidPhoneError("Not enough digits")
+    
+    return f"{nl_prefix}{number}"
+
+
 def validate_phone_number(number, international=False):
-    if (not international) or is_uk_phone_number(number):
-        return validate_uk_phone_number(number)
+    if (not international) or is_nl_phone_number(number):
+        return validate_nl_phone_number(number)
 
     number = normalise_phone_number(number)
 
