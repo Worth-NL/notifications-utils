@@ -9,6 +9,7 @@ from itertools import islice
 from typing import Optional, cast
 
 import phonenumbers
+from deprecated import deprecated
 from flask import current_app
 from ordered_set import OrderedSet
 
@@ -33,6 +34,7 @@ from . import EMAIL_REGEX_PATTERN, hostname_part, tld_part
 from .qr_code import QrCodeTooLong
 
 uk_prefix = "44"
+nl_prefix = "31"
 
 first_column_headings = {
     "email": ["email address"],
@@ -495,6 +497,7 @@ def normalise_phone_number(number):
     return number.lstrip("0")
 
 
+@deprecated(version="75.1.0-patch", reason="Superseded by is_nl_phone_number()")
 def is_uk_phone_number(number):
     if number.startswith("0") and not number.startswith("00"):
         return True
@@ -502,6 +505,18 @@ def is_uk_phone_number(number):
     number = normalise_phone_number(number)
 
     if number.startswith(uk_prefix) or (number.startswith("7") and len(number) < 11):
+        return True
+
+    return False
+
+
+def is_nl_phone_number(number):
+    if number.startswith("0") and not number.startswith("00"):
+        return True
+
+    number = normalise_phone_number(number)
+
+    if number.startswith(nl_prefix) or (number.startswith("6") and len(number) < 10):
         return True
 
     return False
@@ -524,7 +539,7 @@ def get_international_phone_info(number):
     crown_dependency = _is_a_crown_dependency_number(number)
 
     return international_phone_info(
-        international=(prefix != uk_prefix or crown_dependency),
+        international=(prefix != nl_prefix or crown_dependency),
         crown_dependency=crown_dependency,
         country_prefix=prefix,
         billable_units=get_billable_units_for_prefix(prefix),
@@ -554,6 +569,7 @@ def use_numeric_sender(number):
     return INTERNATIONAL_BILLING_RATES[prefix]["attributes"]["alpha"] == "NO"
 
 
+@deprecated(version="75.1.0-patch", reason="Superseded by is_nl_phone_number()")
 def validate_uk_phone_number(number):
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
@@ -569,9 +585,24 @@ def validate_uk_phone_number(number):
     return f"{uk_prefix}{number}"
 
 
+def validate_nl_phone_number(number):
+    number = normalise_phone_number(number).lstrip(nl_prefix).lstrip("0")
+
+    if not number.startswith("6"):
+        raise InvalidPhoneError("Not a dutch mobile number")
+
+    if len(number) > 9:
+        raise InvalidPhoneError("Too many digits")
+
+    if len(number) < 9:
+        raise InvalidPhoneError("Not enough digits")
+
+    return f"{nl_prefix}{number}"
+
+
 def validate_phone_number(number, international=False):
-    if (not international) or is_uk_phone_number(number):
-        return validate_uk_phone_number(number)
+    if (not international) or is_nl_phone_number(number):
+        return validate_nl_phone_number(number)
 
     number = normalise_phone_number(number)
 
