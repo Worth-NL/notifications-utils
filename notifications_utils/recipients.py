@@ -497,7 +497,7 @@ def normalise_phone_number(number):
     return number.lstrip("0")
 
 
-@deprecated("Please use is_nl_phone_number()")
+@deprecated(version="75.1.0-patch", reason="Superseded by is_nl_phone_number()")
 def is_uk_phone_number(number):
     if number.startswith("0") and not number.startswith("00"):
         return True
@@ -569,7 +569,7 @@ def use_numeric_sender(number):
     return INTERNATIONAL_BILLING_RATES[prefix]["attributes"]["alpha"] == "NO"
 
 
-@deprecated("Please use validate_nl_phone_number()")
+@deprecated(version="75.1.0-patch", reason="Superseded by is_nl_phone_number()")
 def validate_uk_phone_number(number):
     number = normalise_phone_number(number).lstrip(uk_prefix).lstrip("0")
 
