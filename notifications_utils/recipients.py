@@ -539,7 +539,7 @@ def get_international_phone_info(number):
     crown_dependency = _is_a_crown_dependency_number(number)
 
     return international_phone_info(
-        international=(prefix != uk_prefix or crown_dependency),
+        international=(prefix != nl_prefix or crown_dependency),
         crown_dependency=crown_dependency,
         country_prefix=prefix,
         billable_units=get_billable_units_for_prefix(prefix),

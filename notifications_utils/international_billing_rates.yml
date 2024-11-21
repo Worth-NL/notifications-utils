@@ -113,6 +113,19 @@
   billable_units: 2
   names:
     - Greece
+"31":
+  attributes:
+    alpha: "YES"
+    comment: null
+    dlr: "YES"
+    generic_sender: null
+    numeric: "YES"
+    sc: "YES"
+    sender_and_registration_info: null
+    text_restrictions: null
+  billable_units: 1
+  names:
+    - Netherlands
 "32":
   attributes:
     alpha: "NO"
