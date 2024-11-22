@@ -589,13 +589,13 @@ def validate_nl_phone_number(number):
     number = normalise_phone_number(number).lstrip(nl_prefix).lstrip("0")
 
     if not number.startswith("6"):
-        raise InvalidPhoneError("Not a dutch mobile number")
+        raise InvalidPhoneError(f"Not a dutch mobile number (should start with 6) :: {number}")
 
     if len(number) > 9:
-        raise InvalidPhoneError("Too many digits")
+        raise InvalidPhoneError(f"Too many digits (>9) :: {len(number)}")
 
     if len(number) < 9:
-        raise InvalidPhoneError("Not enough digits")
+        raise InvalidPhoneError(f"Not enough digits (<9) :: {len(number)}")
 
     return f"{nl_prefix}{number}"
 
