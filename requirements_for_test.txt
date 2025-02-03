@@ -16,3 +16,5 @@ snakeviz==2.1.1
 black==23.10.1  # Also update `.pre-commit-config.yaml` if this changes
 ruff==0.0.272  # Also update `.pre-commit-config.yaml` if this changes
 Deprecated==1.2.15
+tornado>=6.4.2 # not directly required, pinned by Snyk to avoid a vulnerability
+zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
