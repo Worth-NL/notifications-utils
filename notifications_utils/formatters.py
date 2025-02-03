@@ -11,17 +11,17 @@ from notifications_utils.sanitise_text import SanitiseSMS
 from . import email_with_smart_quotes_regex
 
 OBSCURE_ZERO_WIDTH_WHITESPACE = (
-    "\u180E"  # Mongolian vowel separator
-    "\u200B"  # zero width space
-    "\u200C"  # zero width non-joiner
-    "\u200D"  # zero width joiner
+    "\u180e"  # Mongolian vowel separator
+    "\u200b"  # zero width space
+    "\u200c"  # zero width non-joiner
+    "\u200d"  # zero width joiner
     "\u2060"  # word joiner
-    "\uFEFF"  # zero width non-breaking space
+    "\ufeff"  # zero width non-breaking space
     "\u2028"  # line separator
     "\u2029"  # paragraph separator
 )
 
-OBSCURE_FULL_WIDTH_WHITESPACE = "\u00A0" "\u202F"  # non breaking space  # narrow no break space
+OBSCURE_FULL_WIDTH_WHITESPACE = "\u00a0\u202f"  # non breaking space  # narrow no break space
 
 ALL_WHITESPACE = string.whitespace + OBSCURE_ZERO_WIDTH_WHITESPACE + OBSCURE_FULL_WIDTH_WHITESPACE
 
@@ -56,7 +56,7 @@ more_than_two_newlines_in_a_row = re.compile(r"\n{3,}")
 
 
 def unlink_govuk_escaped(message):
-    return re.sub(govuk_not_a_link, r"\1\2\3" + ".\u200B" + r"\4", message)  # Unicode zero-width space
+    return re.sub(govuk_not_a_link, r"\1\2\3" + ".\u200b" + r"\4", message)  # Unicode zero-width space
 
 
 def nl2br(value):
@@ -150,7 +150,7 @@ def sms_encode(content):
 """
 Re-implements html._charref but makes trailing semicolons non-optional
 """
-_charref = re.compile(r"&(#[0-9]+;" r"|#[xX][0-9a-fA-F]+;" r"|[^\t\n\f <&#;]{1,32};)")
+_charref = re.compile(r"&(#[0-9]+;|#[xX][0-9a-fA-F]+;|[^\t\n\f <&#;]{1,32};)")
 
 
 def unescape_strict(s):
@@ -221,7 +221,7 @@ def make_quotes_smart(value):
 def replace_hyphens_with_en_dashes(value):
     return re.sub(
         hyphens_surrounded_by_spaces,
-        (" " "\u2013" " "),  # space  # en dash  # space
+        (" \u2013 "),  # space  # en dash  # space
         value,
     )
 
@@ -291,10 +291,12 @@ def remove_smart_quotes_from_email_addresses(value):
     )
 
 
-def strip_all_whitespace(value, extra_characters=""):
-    # Removes from the beginning and end of the string all whitespace characters and `extra_characters`
-    if value is not None and hasattr(value, "strip"):
-        return value.strip(ALL_WHITESPACE + extra_characters)
+def strip_all_whitespace(value, extra_trailing_characters=""):
+    # Removes:
+    # - all whitespace characters from beginning and end of the string
+    # - and also any `extra_trailing_characters` from just the end of the string
+    if value is not None and hasattr(value, "lstrip") and hasattr(value, "rstrip"):
+        return value.lstrip(ALL_WHITESPACE).rstrip(ALL_WHITESPACE + extra_trailing_characters)
     return value
 
 
@@ -319,4 +321,4 @@ def remove_whitespace(value):
 
 
 def strip_unsupported_characters(value):
-    return value.replace("\u2028", "")
+    return value.replace("\u2028", "").replace("\u3164", "")

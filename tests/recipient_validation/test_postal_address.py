@@ -3,7 +3,7 @@ import pytest
 from notifications_utils.countries import Country
 from notifications_utils.countries.data import Postage
 from notifications_utils.insensitive_dict import InsensitiveDict
-from notifications_utils.postal_address import (
+from notifications_utils.recipient_validation.postal_address import (
     PostalAddress,
     _is_a_real_uk_postcode,
     format_postcode_for_printing,
@@ -276,6 +276,75 @@ def test_has_invalid_characters(address, expected_result):
 
 
 @pytest.mark.parametrize(
+    "address, expected_result",
+    [
+        (
+            "",
+            False,
+        ),
+        (
+            """
+        123 Example Street
+        NFA NFA2024
+        SW1 A 1 AA
+        """,
+            False,
+        ),
+        (
+            """
+        User with no Fixed Address,
+        London
+        SW1 A 1 AA
+        """,
+            True,
+        ),
+        (
+            """
+        A Person
+        NFA
+        SW1A 1AA
+        """,
+            True,
+        ),
+        (
+            """
+        A Person
+        NFA,
+        SW1A 1AA
+        """,
+            True,
+        ),
+        (
+            """
+        A Person
+        no fixed Abode
+        SW1A 1AA
+        """,
+            True,
+        ),
+        (
+            """
+        A Person
+        NO FIXED ADDRESS
+        SW1A 1AA
+        """,
+            True,
+        ),
+        (
+            """
+        nfa
+        Berlin
+        Deutschland
+        """,
+            True,
+        ),
+    ],
+)
+def test_has_no_fixed_abode_address(address, expected_result):
+    assert PostalAddress(address).has_no_fixed_abode_address is expected_result
+
+
+@pytest.mark.parametrize(
     "address, expected_international",
     (
         (
@@ -334,12 +403,12 @@ def test_international(address, expected_international):
 
         S W1 A 1 AA
         """,
-            ("123 Example St.\n" "City of Town\n" "SW1A 1AA"),
+            ("123 Example St.\nCity of Town\nSW1A 1AA"),
             ("123 Example St., City of Town, SW1A 1AA"),
         ),
         (
-            ("123 Example St. \t  ,    \n" ", , ,  ,   ,     ,        ,\n" "City of Town, Region,\n" "SW1A 1AA,,\n"),
-            ("123 Example St.\n" "City of Town, Region\n" "SW1A 1AA"),
+            ("123 Example St. \t  ,    \n, , ,  ,   ,     ,        ,\nCity of Town, Region,\nSW1A 1AA,,\n"),
+            ("123 Example St.\nCity of Town, Region\nSW1A 1AA"),
             ("123 Example St., City of Town, Region, SW1A 1AA"),
         ),
         (
@@ -349,7 +418,7 @@ def test_international(address, expected_international):
 
 
         """,
-            ("123 Example Straße\n" "Germany"),
+            ("123 Example Straße\nGermany"),
             ("123 Example Straße, Germany"),
         ),
     ),
@@ -439,7 +508,7 @@ def test_postage(address, expected_postage):
 )
 def test_from_personalisation(personalisation):
     assert PostalAddress.from_personalisation(personalisation).normalised == (
-        "123 Example Street\n" "City of Town\n" "SW1A 1AA"
+        "123 Example Street\nCity of Town\nSW1A 1AA"
     )
 
 
@@ -451,7 +520,7 @@ def test_from_personalisation_handles_int():
         "address_line_4": "SW1A1AA",
     }
     assert PostalAddress.from_personalisation(personalisation).normalised == (
-        "123\n" "Example Street\n" "City of Town\n" "SW1A 1AA"
+        "123\nExample Street\nCity of Town\nSW1A 1AA"
     )
 
 
@@ -630,11 +699,12 @@ def test_normalise_postcode(postcode, normalised_postcode):
         ("N5 1AA", True),
         ("SO14 6WB", True),
         ("so14 6wb", True),
-        ("so14\u00A06wb", True),
+        ("so14\u00a06wb", True),
         # invalida / incomplete postcodes
         ("N5", False),
         ("SO144 6WB", False),
         ("SO14 6WBA", False),
+        ("NF1 1AA", False),
         ("", False),
         ("Bad postcode", False),
         # British Forces Post Office numbers are not postcodes
@@ -648,9 +718,11 @@ def test_normalise_postcode(postcode, normalised_postcode):
         ("BF1 3AA", True),
         ("BF13AA", True),
         (" BF2 0FR ", True),
-        # Giro Bank valid postcode and invalid postcode
-        ("GIR0AA", True),
-        ("GIR0AB", False),
+        # Giro Bank’s vanity postcode is deprecated
+        ("GIR0AA", False),
+        # Gibraltar’s one postcode is not valid because it’s in the
+        # Europe postal zone
+        ("GX111AA", False),
     ],
 )
 def test_if_postcode_is_a_real_uk_postcode(postcode, result):
@@ -658,7 +730,7 @@ def test_if_postcode_is_a_real_uk_postcode(postcode, result):
 
 
 def test_if_postcode_is_a_real_uk_postcode_normalises_before_checking_postcode(mocker):
-    normalise_postcode_mock = mocker.patch("notifications_utils.postal_address.normalise_postcode")
+    normalise_postcode_mock = mocker.patch("notifications_utils.recipient_validation.postal_address.normalise_postcode")
     normalise_postcode_mock.return_value = "SW11AA"
     assert _is_a_real_uk_postcode("sw1  1aa") is True
 
@@ -672,7 +744,7 @@ def test_if_postcode_is_a_real_uk_postcode_normalises_before_checking_postcode(m
         ("N5     3EF", "N5 3EF"),
         ("N53EF   ", "N5 3EF"),
         ("n53Ef", "N5 3EF"),
-        ("n5 \u00A0 \t 3Ef", "N5 3EF"),
+        ("n5 \u00a0 \t 3Ef", "N5 3EF"),
         ("SO146WB", "SO14 6WB"),
         ("GIR0AA", "GIR 0AA"),
         ("BF11AA", "BF1 1AA"),
@@ -741,6 +813,15 @@ def test_format_postcode_for_printing(postcode, postcode_with_space):
             2
         """,
             True,
+            False,
+        ),
+        (
+            """
+            House
+            No fixed abode
+            France
+        """,
+            False,
             False,
         ),
         (
@@ -835,6 +916,12 @@ def test_valid_last_line_too_short_too_long(address):
 def test_valid_with_invalid_characters():
     address = "Valid\nExcept\n[For one character\nBhutan\n"
     assert PostalAddress(address, allow_international_letters=True).valid is False
+
+
+def test_valid_with_nfa_address():
+    postal_address = PostalAddress("User\nNo fixed abode\nSW1 1AA")
+    assert postal_address.valid is False
+    assert postal_address.has_valid_last_line is True
 
 
 @pytest.mark.parametrize(
@@ -951,20 +1038,17 @@ def test_bfpo_address_lines_error():
 
 
 def test_bfpo_address_with_country_still_shows_country_in_normalised_lines_even_if_invalid():
-    assert (
-        PostalAddress(
-            """International BFPO
+    assert PostalAddress(
+        """International BFPO
             BFPO 1
             BF1 1AA
             usa"""
-        ).normalised_lines
-        == [
-            "International BFPO",
-            "BF1 1AA",
-            "BFPO 1",
-            "United States",
-        ]
-    )
+    ).normalised_lines == [
+        "International BFPO",
+        "BF1 1AA",
+        "BFPO 1",
+        "United States",
+    ]
 
 
 def test_postal_address_equality():

@@ -12,7 +12,7 @@ params, ids = zip(
     (("–", "-"), "compatibility transform unicode char (EN DASH (U+2013)"),
     (("—", "-"), "compatibility transform unicode char (EM DASH (U+2014)"),
     (("…", "..."), "compatibility transform unicode char (HORIZONTAL ELLIPSIS (U+2026)"),
-    (("\u200B", ""), "compatibility transform unicode char (ZERO WIDTH SPACE (U+200B)"),
+    (("\u200b", ""), "compatibility transform unicode char (ZERO WIDTH SPACE (U+200B)"),
     (("‘", "'"), "compatibility transform unicode char (LEFT SINGLE QUOTATION MARK (U+2018)"),
     (("’", "'"), "compatibility transform unicode char (RIGHT SINGLE QUOTATION MARK (U+2019)"),
     (("“", '"'), "compatibility transform unicode char (LEFT DOUBLE QUOTATION MARK (U+201C)	"),
@@ -21,6 +21,7 @@ params, ids = zip(
     # this unicode char is not decomposable
     (("😬", "?"), "undecomposable unicode char (grimace emoji)"),
     (("↉", "?"), "vulgar fraction (↉) that we do not try decomposing"),
+    strict=True,
 )
 
 
@@ -43,6 +44,7 @@ params, ids = zip(
     (("ë", "ë", "e"), "non-gsm Welsh char (e with dots)"),
     (("Ò", "Ò", "O"), "non-gsm Welsh char (capital O with grave accent)"),
     (("í", "í", "i"), "non-gsm Welsh char (i with accent)"),
+    strict=True,
 )
 
 
@@ -91,7 +93,7 @@ def test_encode_string(content, expected):
         ("Ŵêlsh chârâctêrs ârê cômpâtîblê wîth SanitiseSMS", SanitiseSMS, set()),
         ("Lots of GSM chars that arent ascii compatible:\n\r€", SanitiseSMS, set()),
         ("Lots of GSM chars that arent ascii compatible:\n\r€", SanitiseASCII, {"\n", "\r", "€"}),
-        ("Obscure\u00A0whitespace\u202Fcharacters which \u2028we \u2029normalise o\u180Eut", SanitiseSMS, set()),
+        ("Obscure\u00a0whitespace\u202fcharacters which \u2028we \u2029normalise o\u180eut", SanitiseSMS, set()),
     ],
 )
 def test_sms_encoding_get_non_compatible_characters(content, cls, expected):

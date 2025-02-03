@@ -12,16 +12,16 @@ class SanitiseText:
         "’": "'",  # RIGHT SINGLE QUOTATION MARK (U+2019)
         "“": '"',  # LEFT DOUBLE QUOTATION MARK (U+201C)
         "”": '"',  # RIGHT DOUBLE QUOTATION MARK (U+201D)
-        "\u180E": "",  # Mongolian vowel separator
-        "\u200B": "",  # zero width space
-        "\u200C": "",  # zero width non-joiner
-        "\u200D": "",  # zero width joiner
+        "\u180e": "",  # Mongolian vowel separator
+        "\u200b": "",  # zero width space
+        "\u200c": "",  # zero width non-joiner
+        "\u200d": "",  # zero width joiner
         "\u2060": "",  # word joiner
-        "\uFEFF": "",  # zero width non-breaking space
+        "\ufeff": "",  # zero width non-breaking space
         "\u2028": "",  # line separator
         "\u2029": "",  # paragraph separator
-        "\u00A0": " ",  # NON BREAKING WHITE SPACE (U+200B)
-        "\u202F": " ",  # narrow no break space
+        "\u00a0": " ",  # NON BREAKING WHITE SPACE (U+200B)
+        "\u202f": " ",  # narrow no break space
         "\t": " ",  # TAB
         "Ł": "L",  # LATIN CAPITAL LETTER L WITH STROKE (U+0141)
         "ł": "l",  # LATIN SMALL LETTER L WITH STROKE (U+0142)
@@ -38,7 +38,7 @@ class SanitiseText:
 
         This follows the same rules as `cls.encode`, but returns just the characters that encode would replace with `?`
         """
-        return set(c for c in content if c not in cls.ALLOWED_CHARACTERS and cls.downgrade_character(c) is None)
+        return {c for c in content if c not in cls.ALLOWED_CHARACTERS and cls.downgrade_character(c) is None}
 
     @staticmethod
     def get_unicode_char_from_codepoint(codepoint):
@@ -123,7 +123,7 @@ class SanitiseSMS(SanitiseText):
     GSM_CHARACTERS = (
         set(
             "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?"
-            + "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+            "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
         )
         | EXTENDED_GSM_CHARACTERS
     )
