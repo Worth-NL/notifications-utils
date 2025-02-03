@@ -237,6 +237,7 @@ def test_get_redis_lock_returns_stub_if_redis_not_enabled(mocked_redis_client):
 
 
 def test_redis_stub_lock_function_signatures_match():
+    print(f"Testing StubLock agains redis=={redis.__version__}")
     lock_methods = dict(inspect.getmembers(redis.lock.Lock, inspect.isfunction))
     stub_methods = dict(inspect.getmembers(StubLock, inspect.isfunction))
 
@@ -251,12 +252,12 @@ def test_redis_stub_lock_function_signatures_match():
     }
 
     missing_methods = lock_methods_to_test - stub_methods.keys()
-    assert not missing_methods, f"StubLock has missing methods (testing against redis=={redis.__version__})"
+    assert not missing_methods, "stub has missing methods"
 
     for fn_name in lock_methods_to_test:
         lock_sig = inspect.signature(lock_methods[fn_name])
         stub_sig = inspect.signature(stub_methods[fn_name])
-        assert lock_sig.parameters == stub_sig.parameters, f"(testing StubLock against redis=={redis.__version__})"
+        assert lock_sig.parameters == stub_sig.parameters
 
 
 def test_decrby(mocked_redis_client):

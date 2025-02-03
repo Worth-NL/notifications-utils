@@ -2,13 +2,13 @@ import numbers
 import uuid
 from time import time
 from types import TracebackType
-
-# (`Type` is deprecated in favour of `type` but we need to match the
-# signature of the method we are stubbing)
-from typing import Type  # noqa: UP035
+from typing import Optional, Type
 
 from flask import current_app
 from flask_redis import FlaskRedis
+
+# expose redis exceptions so that they can be caught
+from redis.exceptions import RedisError  # noqa
 from redis.lock import Lock
 from redis.typing import Number
 
@@ -26,11 +26,15 @@ def prepare_value(val):
     # things redis-py natively supports
     if isinstance(
         val,
-        bytes | str | numbers.Number,
+        (
+            bytes,
+            str,
+            numbers.Number,
+        ),
     ):
         return val
     # things we know we can safely cast to string
-    elif isinstance(val, uuid.UUID):
+    elif isinstance(val, (uuid.UUID,)):
         return str(val)
     else:
         raise ValueError(f"cannot cast {type(val)} to a string")
@@ -191,10 +195,10 @@ class StubLock:
         self,
         redis,
         name: str,
-        timeout: Number | None = None,
+        timeout: Optional[Number] = None,
         sleep: Number = 0.1,
         blocking: bool = True,
-        blocking_timeout: Number | None = None,
+        blocking_timeout: Optional[Number] = None,
         thread_local: bool = True,
     ):
         self._locked = False
@@ -206,18 +210,18 @@ class StubLock:
 
     def __exit__(
         self,
-        exc_type: Type[BaseException] | None,  # noqa: UP006
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType],
     ) -> None:
         self._locked = False
 
     def acquire(
         self,
-        sleep: Number | None = None,
-        blocking: bool | None = None,
-        blocking_timeout: Number | None = None,
-        token: str | None = None,
+        sleep: Optional[Number] = None,
+        blocking: Optional[bool] = None,
+        blocking_timeout: Optional[Number] = None,
+        token: Optional[str] = None,
     ) -> bool:
         self._locked = True
         return True

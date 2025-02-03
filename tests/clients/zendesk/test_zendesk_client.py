@@ -17,8 +17,14 @@ from notifications_utils.clients.zendesk.zendesk_client import (
 
 
 @pytest.fixture(scope="function")
-def zendesk_client():
-    return ZendeskClient(api_key="testkey")
+def zendesk_client(app):
+    client = ZendeskClient()
+
+    app.config["ZENDESK_API_KEY"] = "testkey"
+
+    client.init_app(app)
+
+    return client
 
 
 def test_zendesk_client_send_ticket_to_zendesk(zendesk_client, app, rmock, caplog):
@@ -36,14 +42,13 @@ def test_zendesk_client_send_ticket_to_zendesk(zendesk_client, app, rmock, caplo
 
     with caplog.at_level(logging.INFO):
         ticket = NotifySupportTicket("subject", "message", "incident")
-        response = zendesk_client.send_ticket_to_zendesk(ticket)
+        zendesk_client.send_ticket_to_zendesk(ticket)
 
     assert rmock.last_request.headers["Authorization"][:6] == "Basic "
     b64_auth = rmock.last_request.headers["Authorization"][6:]
     assert b64decode(b64_auth.encode()).decode() == "zd-api-notify@digital.cabinet-office.gov.uk/token:testkey"
     assert rmock.last_request.json() == ticket.request_data
     assert "Zendesk create ticket 12345 succeeded" in caplog.messages
-    assert response == 12345
 
 
 def test_zendesk_client_send_ticket_to_zendesk_error(zendesk_client, app, rmock, caplog):
@@ -57,7 +62,7 @@ def test_zendesk_client_send_ticket_to_zendesk_error(zendesk_client, app, rmock,
     assert "Zendesk create ticket request failed with 401 '{'foo': 'bar'}'" in caplog.messages
 
 
-def test_zendesk_client_send_ticket_to_zendesk_with_user_suspended_error(zendesk_client, app, rmock, caplog):
+def test_zendesk_client_send_ticket_to_zendesk_with_user_suspended_error(zendesk_client, rmock, caplog):
     rmock.request(
         "POST",
         ZendeskClient.ZENDESK_TICKET_URL,
@@ -69,13 +74,12 @@ def test_zendesk_client_send_ticket_to_zendesk_with_user_suspended_error(zendesk
         },
     )
     ticket = NotifySupportTicket("subject", "message", "incident")
-    response = zendesk_client.send_ticket_to_zendesk(ticket)
+    zendesk_client.send_ticket_to_zendesk(ticket)
 
     assert caplog.messages == [
         "Zendesk create ticket failed because user is suspended "
         "'{'requester': [{'description': 'Requester: Joe Bloggs is suspended.'}]}'"
     ]
-    assert response is None
 
 
 @pytest.mark.parametrize(
@@ -119,11 +123,10 @@ def test_notify_support_ticket_request_data(p1_arg, expected_tags, expected_prio
             "tags": expected_tags,
             "type": "question",
             "custom_fields": [
-                {"id": "14229641690396", "value": None},
+                {"id": "360022836500", "value": []},
                 {"id": "360022943959", "value": None},
                 {"id": "360022943979", "value": None},
                 {"id": "1900000745014", "value": None},
-                {"id": "15925693889308", "value": None},
             ],
         }
     }
@@ -146,63 +149,50 @@ def test_notify_support_ticket_request_data_with_user_name_and_email(name, zende
 
 
 @pytest.mark.parametrize(
-    "custom_fields, tech_ticket_tag, notify_task_type, org_id, org_type, service_id, user_created_at",
+    "custom_fields, tech_ticket_tag, categories, org_id, org_type, service_id",
     [
-        (
-            {"notify_ticket_type": NotifyTicketType.TECHNICAL},
-            "notify_ticket_type_technical",
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
+        ({"notify_ticket_type": NotifyTicketType.TECHNICAL}, "notify_ticket_type_technical", [], None, None, None),
         (
             {"notify_ticket_type": NotifyTicketType.NON_TECHNICAL},
             "notify_ticket_type_non_technical",
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-        (
-            {"notify_task_type": "notify_task_email_branding"},
-            None,
-            "notify_task_email_branding",
-            None,
+            [],
             None,
             None,
             None,
         ),
         (
-            {"org_id": "1234", "org_type": "local", "user_created_at": datetime.datetime(2024, 10, 10, 12, 36)},
+            {"ticket_categories": ["notify_billing", "notify_bug"]},
+            None,
+            ["notify_billing", "notify_bug"],
             None,
             None,
+            None,
+        ),
+        (
+            {"org_id": "1234", "org_type": "local"},
+            None,
+            [],
             "1234",
             "notify_org_type_local",
             None,
-            "2024-10-10",
         ),
         (
             {"service_id": "abcd", "org_type": "nhs"},
             None,
-            None,
+            [],
             None,
             "notify_org_type_nhs",
             "abcd",
-            None,
         ),
     ],
 )
 def test_notify_support_ticket_request_data_custom_fields(
     custom_fields,
     tech_ticket_tag,
-    notify_task_type,
+    categories,
     org_id,
     org_type,
     service_id,
-    user_created_at,
 ):
     notify_ticket_form = NotifySupportTicket("subject", "message", "question", **custom_fields)
 
@@ -210,15 +200,10 @@ def test_notify_support_ticket_request_data_custom_fields(
         assert {"id": "1900000744994", "value": tech_ticket_tag} in notify_ticket_form.request_data["ticket"][
             "custom_fields"
         ]
-    assert {"id": "14229641690396", "value": notify_task_type} in notify_ticket_form.request_data["ticket"][
-        "custom_fields"
-    ]
+    assert {"id": "360022836500", "value": categories} in notify_ticket_form.request_data["ticket"]["custom_fields"]
     assert {"id": "360022943959", "value": org_id} in notify_ticket_form.request_data["ticket"]["custom_fields"]
     assert {"id": "360022943979", "value": org_type} in notify_ticket_form.request_data["ticket"]["custom_fields"]
     assert {"id": "1900000745014", "value": service_id} in notify_ticket_form.request_data["ticket"]["custom_fields"]
-    assert {"id": "15925693889308", "value": user_created_at} in notify_ticket_form.request_data["ticket"][
-        "custom_fields"
-    ]
 
 
 def test_notify_support_ticket_request_data_email_ccs():
@@ -246,30 +231,13 @@ def test_notify_support_ticket_with_html_body():
             "tags": ["govuk_notify_support"],
             "type": "task",
             "custom_fields": [
-                {"id": "14229641690396", "value": None},
+                {"id": "360022836500", "value": []},
                 {"id": "360022943959", "value": None},
                 {"id": "360022943979", "value": None},
                 {"id": "1900000745014", "value": None},
-                {"id": "15925693889308", "value": None},
             ],
         }
     }
-
-
-@pytest.mark.parametrize(
-    "user_created_at, expected_value",
-    [
-        (None, None),
-        (datetime.datetime(2023, 11, 7, 8, 34, 54, tzinfo=datetime.UTC), "2023-11-07"),
-        (datetime.datetime(2023, 11, 7, 23, 34, 54, tzinfo=datetime.UTC), "2023-11-07"),
-        (datetime.datetime(2023, 6, 7, 23, 34, 54, tzinfo=datetime.UTC), "2023-06-08"),
-        (datetime.datetime(2023, 6, 7, 12, 34, 54, tzinfo=datetime.UTC), "2023-06-07"),
-    ],
-)
-def test_notify_support_ticket__format_user_created_at_value(user_created_at, expected_value):
-    notify_ticket_form = NotifySupportTicket("subject", "message", "task")
-
-    assert notify_ticket_form._format_user_created_at_value(user_created_at) == expected_value
 
 
 class TestZendeskClientUploadAttachment:

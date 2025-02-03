@@ -4,7 +4,7 @@ from datetime import datetime
 from functools import lru_cache
 from html import unescape
 from os import path
-from typing import Literal
+from typing import Literal, Optional
 
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
@@ -44,8 +44,8 @@ from notifications_utils.markdown import (
     notify_letter_qrcode_validator,
     notify_plain_text_email_markdown,
 )
+from notifications_utils.postal_address import PostalAddress, address_lines_1_to_7_keys
 from notifications_utils.qr_code import QrCodeTooLong
-from notifications_utils.recipient_validation.postal_address import PostalAddress, address_lines_1_to_7_keys
 from notifications_utils.sanitise_text import SanitiseSMS
 from notifications_utils.take import Take
 from notifications_utils.template_change import TemplateChange
@@ -73,7 +73,7 @@ class Template(ABC):
             raise TypeError("Values must be a dict")
         if template.get("template_type") != self.template_type:
             raise TypeError(
-                f"Cannot initialise {self.__class__.__name__} with {template.get('template_type')} template_type"
+                f"Cannot initialise {self.__class__.__name__} " f'with {template.get("template_type")} template_type'
             )
         self.id = template.get("id", None)
         self.name = template.get("name", None)
@@ -116,7 +116,7 @@ class Template(ABC):
             placeholders = InsensitiveDict.from_keys(self.placeholders)
             self._values = InsensitiveDict(value).as_dict_with_keys(
                 self.placeholders
-                | {key for key in value.keys() if InsensitiveDict.make_key(key) not in placeholders.keys()}
+                | set(key for key in value.keys() if InsensitiveDict.make_key(key) not in placeholders.keys())
             )
 
     @property
@@ -130,7 +130,7 @@ class Template(ABC):
 
     @property
     def missing_data(self):
-        return [placeholder for placeholder in self.placeholders if self.values.get(placeholder) is None]
+        return list(placeholder for placeholder in self.placeholders if self.values.get(placeholder) is None)
 
     @property
     def additional_data(self):
@@ -402,22 +402,12 @@ class SubjectMixin:
 class BaseEmailTemplate(SubjectMixin, Template):
     template_type = "email"
 
-    def __init__(self, template, values=None, unsubscribe_link=None, **kwargs):
-        self.unsubscribe_link = unsubscribe_link
-        super().__init__(template, values, **kwargs)
-
-    @property
-    def content_with_unsubscribe_link(self):
-        if self.unsubscribe_link:
-            return f"{self.content}\n\n---\n\n[Unsubscribe from these emails]({self.unsubscribe_link})"
-        return self.content
-
     @property
     def html_body(self):
         return (
             Take(
                 Field(
-                    self.content_with_unsubscribe_link,
+                    self.content,
                     self.values,
                     html="escape",
                     markdown_lists=True,
@@ -472,7 +462,7 @@ class BaseEmailTemplate(SubjectMixin, Template):
 class PlainTextEmailTemplate(BaseEmailTemplate):
     def __str__(self):
         return (
-            Take(Field(self.content_with_unsubscribe_link, self.values, html="passthrough", markdown_lists=True))
+            Take(Field(self.content, self.values, html="passthrough", markdown_lists=True))
             .then(unlink_govuk_escaped)
             .then(strip_unsupported_characters)
             .then(add_trailing_newline)
@@ -515,9 +505,8 @@ class HTMLEmailTemplate(BaseEmailTemplate):
         brand_colour=None,
         brand_banner=False,
         brand_alt_text=None,
-        **kwargs,
     ):
-        super().__init__(template, values, **kwargs)
+        super().__init__(template, values)
         self.govuk_banner = govuk_banner
         self.complete_html = complete_html
         self.brand_logo = brand_logo
@@ -562,12 +551,59 @@ class HTMLEmailTemplate(BaseEmailTemplate):
         )
 
 
+class EmailPreviewTemplate(BaseEmailTemplate):
+    jinja_template = template_env.get_template("email_preview_template.jinja2")
+
+    def __init__(
+        self,
+        template,
+        values=None,
+        from_name=None,
+        reply_to=None,
+        show_recipient=True,
+        redact_missing_personalisation=False,
+    ):
+        super().__init__(template, values, redact_missing_personalisation=redact_missing_personalisation)
+        self.from_name = from_name
+        self.reply_to = reply_to
+        self.show_recipient = show_recipient
+
+    def __str__(self):
+        return Markup(
+            self.jinja_template.render(
+                {
+                    "body": self.html_body,
+                    "subject": self.subject,
+                    "from_name": escape_html(self.from_name),
+                    "reply_to": self.reply_to,
+                    "recipient": Field("((email address))", self.values, with_brackets=False),
+                    "show_recipient": self.show_recipient,
+                }
+            )
+        )
+
+    @property
+    def subject(self):
+        return (
+            Take(
+                Field(
+                    self._subject,
+                    self.values,
+                    html="escape",
+                    redact_missing_personalisation=self.redact_missing_personalisation,
+                )
+            )
+            .then(do_nice_typography)
+            .then(normalise_whitespace)
+        )
+
+
 class BaseLetterTemplate(SubjectMixin, Template):
     template_type = "letter"
     max_page_count = LETTER_MAX_PAGE_COUNT
     max_sheet_count = LETTER_MAX_PAGE_COUNT // 2
 
-    address_block = "\n".join(f"(({line.replace('_', ' ')}))" for line in address_lines_1_to_7_keys)
+    address_block = "\n".join(f'(({line.replace("_", " ")}))' for line in address_lines_1_to_7_keys)
 
     def __init__(
         self,
@@ -620,7 +656,7 @@ class BaseLetterTemplate(SubjectMixin, Template):
     def postal_address(self):
         return PostalAddress.from_personalisation(InsensitiveDict(self.values))
 
-    def has_qr_code_with_too_much_data(self) -> QrCodeTooLong | None:
+    def has_qr_code_with_too_much_data(self) -> Optional[QrCodeTooLong]:
         content = self._personalised_content if self.values else self.content
         try:
             Take(content).then(notify_letter_qrcode_validator)

@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, call
-
 import pytest
 
 from notifications_utils.clients.redis import RequestCache
@@ -43,12 +41,12 @@ def cache(mocked_redis_client):
     ),
 )
 def test_set(
+    mocker,
     mocked_redis_client,
     cache,
     args,
     kwargs,
     expected_cache_key,
-    mocker,
 ):
     mock_redis_set = mocker.patch.object(
         mocked_redis_client,
@@ -85,11 +83,11 @@ def test_set(
     ),
 )
 def test_set_with_custom_ttl(
+    mocker,
     mocked_redis_client,
     cache,
     cache_set_call,
     expected_redis_client_ttl,
-    mocker,
 ):
     mock_redis_set = mocker.patch.object(
         mocked_redis_client,
@@ -127,79 +125,6 @@ def test_raises_if_key_doesnt_match_arguments(cache):
 
 
 @pytest.mark.parametrize(
-    "cache_decision, ttl_in_seconds_override, expect_set_call_ttl",
-    (
-        (False, None, None),
-        (True, None, 333),
-        (123, None, 333),
-        (True, 234, 234),
-    ),
-)
-def test_set_result_wrapper(
-    cache_decision, ttl_in_seconds_override, expect_set_call_ttl, mocked_redis_client, cache, mocker
-):
-    @cache.set("{bar}-xyz", ttl_in_seconds=333)
-    def foo(bar):
-        return RequestCache.CacheResultWrapper({"blah": f"123-{bar}"}, cache_decision, ttl_in_seconds_override)
-
-    mock_redis_set = mocker.patch.object(
-        mocked_redis_client,
-        "set",
-    )
-    mocker.patch.object(
-        mocked_redis_client,
-        "get",
-        return_value=None,
-    )
-
-    ret = foo("quack")
-
-    assert ret == {"blah": "123-quack"}
-
-    assert (
-        mock_redis_set.mock_calls == []
-        if cache_decision is None
-        else [mocker.call("quack-xyz", '{"blah": "123-quack"}', ex=expect_set_call_ttl)]
-    )
-
-
-def test_set_result_custom_get_decision(mocked_redis_client, cache, mocker):
-    @cache.get_cache_decision.register
-    def _(result: float):
-        return result > 50
-
-    @cache.get_ttl_in_seconds_override.register
-    def _(result: float):
-        return int(result) * 2
-
-    @cache.set("{bar}-xyz", ttl_in_seconds=333)
-    def foo(bar):
-        return bar * 10.0
-
-    mock_redis_set = mocker.patch.object(
-        mocked_redis_client,
-        "set",
-    )
-    mocker.patch.object(
-        mocked_redis_client,
-        "get",
-        return_value=None,
-    )
-
-    ret = foo(3)
-
-    assert ret == 30.0
-
-    assert mock_redis_set.mock_calls == []
-
-    ret2 = foo(8)
-
-    assert ret2 == 80.0
-
-    assert mock_redis_set.mock_calls == [mocker.call("8-xyz", "80.0", ex=160)]
-
-
-@pytest.mark.parametrize(
     "args, expected_cache_key",
     (
         (
@@ -212,7 +137,7 @@ def test_set_result_custom_get_decision(mocked_redis_client, cache, mocker):
         ),
     ),
 )
-def test_get(mocked_redis_client, cache, args, expected_cache_key, mocker):
+def test_get(mocker, mocked_redis_client, cache, args, expected_cache_key):
     mock_redis_get = mocker.patch.object(
         mocked_redis_client,
         "get",
@@ -243,7 +168,7 @@ def test_get(mocked_redis_client, cache, args, expected_cache_key, mocker):
         ),
     ),
 )
-def test_delete(mocked_redis_client, cache, args, expected_cache_key, mocker):
+def test_delete(mocker, mocked_redis_client, cache, args, expected_cache_key):
     mock_redis_delete = mocker.patch.object(
         mocked_redis_client,
         "delete",
@@ -255,25 +180,26 @@ def test_delete(mocked_redis_client, cache, args, expected_cache_key, mocker):
 
     assert foo(*args) == "bar"
 
-    expected_call = call(expected_cache_key, raise_exception=True)
-    mock_redis_delete.assert_has_calls([expected_call, expected_call])
+    mock_redis_delete.assert_called_once_with(expected_cache_key)
 
 
-def test_doesnt_update_api_if_redis_delete_fails(mocked_redis_client, cache, mocker):
-    mocker.patch.object(mocked_redis_client, "delete", side_effect=RuntimeError("API update failed"))
-    fake_api_call = MagicMock()
+def test_delete_even_if_call_raises(mocker, mocked_redis_client, cache):
+    mock_redis_delete = mocker.patch.object(
+        mocked_redis_client,
+        "delete",
+    )
 
     @cache.delete("bar")
     def foo():
-        return fake_api_call()
+        raise RuntimeError
 
     with pytest.raises(RuntimeError):
         foo()
 
-    fake_api_call.assert_not_called()
+    mock_redis_delete.assert_called_once_with("bar")
 
 
-def test_delete_by_pattern(mocked_redis_client, cache, mocker):
+def test_delete_by_pattern(mocker, mocked_redis_client, cache):
     mock_redis_delete = mocker.patch.object(
         mocked_redis_client,
         "delete_by_pattern",
@@ -285,19 +211,20 @@ def test_delete_by_pattern(mocked_redis_client, cache, mocker):
 
     assert foo(1, 2, 3) == "bar"
 
-    expected_call = call("1-2-3-???", raise_exception=True)
-    mock_redis_delete.assert_has_calls([expected_call, expected_call])
+    mock_redis_delete.assert_called_once_with("1-2-3-???")
 
 
-def test_doesnt_update_api_if_redis_delete_by_pattern_fails(mocked_redis_client, cache, mocker):
-    mocker.patch.object(mocked_redis_client, "delete_by_pattern", side_effect=RuntimeError("API update failed"))
-    fake_api_call = MagicMock()
+def test_delete_by_pattern_even_if_call_raises(mocker, mocked_redis_client, cache):
+    mock_redis_delete = mocker.patch.object(
+        mocked_redis_client,
+        "delete_by_pattern",
+    )
 
     @cache.delete_by_pattern("bar-???")
     def foo():
-        return fake_api_call()
+        raise RuntimeError
 
     with pytest.raises(RuntimeError):
         foo()
 
-    fake_api_call.assert_not_called()
+    mock_redis_delete.assert_called_once_with("bar-???")

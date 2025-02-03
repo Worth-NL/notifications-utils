@@ -1,20 +1,19 @@
 import json
 import logging as builtin_logging
-import re
+import logging.handlers as builtin_logging_handlers
 import time
 from unittest import mock
 
 import pytest
 from freezegun import freeze_time
 
-from notifications_utils import request_helper
-from notifications_utils.logging import flask as logging
+from notifications_utils import logging, request_helper
 from notifications_utils.testing.comparisons import AnyStringMatching, RestrictedAny
 
 
-def test_get_handlers_sets_up_logging_appropriately_with_debug():
+def test_get_handlers_sets_up_logging_appropriately_with_debug(tmpdir):
     class App:
-        config = {"NOTIFY_APP_NAME": "bar", "NOTIFY_LOG_LEVEL": "ERROR", "NOTIFY_LOG_LEVEL_HANDLERS": "ERROR"}
+        config = {"NOTIFY_LOG_PATH": str(tmpdir / "foo"), "NOTIFY_APP_NAME": "bar", "NOTIFY_LOG_LEVEL": "ERROR"}
         debug = True
 
     app = App()
@@ -22,16 +21,61 @@ def test_get_handlers_sets_up_logging_appropriately_with_debug():
     handlers = logging.get_handlers(app, extra_filters=[])
 
     assert len(handlers) == 1
-    assert type(handlers[0]) is builtin_logging.StreamHandler
-    assert type(handlers[0].formatter) is logging.Formatter
+    assert type(handlers[0]) == builtin_logging.StreamHandler
+    assert type(handlers[0].formatter) == logging.Formatter
+    assert not (tmpdir / "foo").exists()
 
 
-def test_get_handlers_sets_up_logging_appropriately_without_debug():
+@pytest.mark.parametrize(
+    "platform",
+    [
+        "local",
+        "paas",
+        "something-else",
+    ],
+)
+def test_get_handlers_sets_up_logging_appropriately_without_debug_when_not_on_ecs(tmpdir, platform):
+    class TestFilter(builtin_logging.Filter):
+        def filter(self, record):
+            record.arbitrary_info = "some-extra-info"
+            return record
+
     class App:
         config = {
+            # make a tempfile called foo
+            "NOTIFY_LOG_PATH": str(tmpdir / "foo"),
             "NOTIFY_APP_NAME": "bar",
             "NOTIFY_LOG_LEVEL": "ERROR",
-            "NOTIFY_LOG_LEVEL_HANDLERS": "ERROR",
+            "NOTIFY_RUNTIME_PLATFORM": platform,
+        }
+        debug = False
+
+    app = App()
+
+    handlers = logging.get_handlers(app, extra_filters=[TestFilter()])
+
+    assert len(handlers) == 2
+    assert type(handlers[0]) == builtin_logging.StreamHandler
+    assert type(handlers[0].formatter) == logging.JSONFormatter
+    assert len(handlers[0].filters) == 6
+
+    assert type(handlers[1]) == builtin_logging_handlers.WatchedFileHandler
+    assert type(handlers[1].formatter) == logging.JSONFormatter
+    assert len(handlers[1].filters) == 6
+
+    dir_contents = tmpdir.listdir()
+    assert len(dir_contents) == 1
+    assert dir_contents[0].basename == "foo.json"
+
+
+def test_get_handlers_sets_up_logging_appropriately_without_debug_on_ecs(tmpdir):
+    class App:
+        config = {
+            # make a tempfile called foo
+            "NOTIFY_LOG_PATH": str(tmpdir / "foo"),
+            "NOTIFY_APP_NAME": "bar",
+            "NOTIFY_LOG_LEVEL": "ERROR",
+            "NOTIFY_RUNTIME_PLATFORM": "ecs",
         }
         debug = False
 
@@ -40,8 +84,10 @@ def test_get_handlers_sets_up_logging_appropriately_without_debug():
     handlers = logging.get_handlers(app, extra_filters=[])
 
     assert len(handlers) == 1
-    assert type(handlers[0]) is builtin_logging.StreamHandler
-    assert type(handlers[0].formatter) is logging.JSONFormatter
+    assert type(handlers[0]) == builtin_logging.StreamHandler
+    assert type(handlers[0].formatter) == logging.JSONFormatter
+
+    assert not (tmpdir / "foo.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -57,9 +103,11 @@ def test_log_timeformat_fractional_seconds(frozen_time, logged_time, tmpdir):
 
         class App:
             config = {
+                # make a tempfile called foo
+                "NOTIFY_LOG_PATH": str(tmpdir / "foo"),
                 "NOTIFY_APP_NAME": "bar",
                 "NOTIFY_LOG_LEVEL": "INFO",
-                "NOTIFY_LOG_LEVEL_HANDLERS": "INFO",
+                "NOTIFY_RUNTIME_PLATFORM": "ecs",
             }
             debug = False
 
@@ -96,16 +144,13 @@ def test_base_json_formatter_contains_service_id(tmpdir):
         (503, builtin_logging.WARNING, True),
     ),
 )
-@pytest.mark.parametrize("stream_response", (False, True))
 def test_app_request_logs_level_by_status_code(
     app_with_mocked_logger,
     status_code,
     expected_after_level,
     with_request_helper,
-    stream_response,
 ):
     app = app_with_mocked_logger
-    app.config["NOTIFY_ENVIRONMENT"] = "foo"
     mock_req_logger = mock.Mock(
         spec=builtin_logging.Logger("flask.app.request"),
         handlers=[],
@@ -119,16 +164,9 @@ def test_app_request_logs_level_by_status_code(
     @app.route("/")
     def some_route():
         time.sleep(0.05)
-        return iter("foobar") if stream_response else "foobar", status_code
+        return "foo", status_code
 
-    test_response = app.test_client().get(
-        "/",
-        headers={
-            "x-b3-parentspanid": "deadbeef",
-            "x-b3-spanid": "abadcafe",
-            "x-b3-traceid": "feedface",
-        },
-    )
+    app.test_client().get("/", headers={"x-b3-parentspanid": "deadbeef"})
 
     assert (
         mock.call(
@@ -140,8 +178,6 @@ def test_app_request_logs_level_by_status_code(
                 "endpoint": "some_route",
                 "host": "localhost",
                 "path": "/",
-                "environment": "foo",
-                "request_size": 0,
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "remote_addr": "127.0.0.1",
                 "parent_span_id": "deadbeef" if with_request_helper else None,
@@ -152,8 +188,6 @@ def test_app_request_logs_level_by_status_code(
                 "method": "GET",
                 "endpoint": "some_route",
                 "host": "localhost",
-                "environment": "foo",
-                "request_size": 0,
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "remote_addr": "127.0.0.1",
@@ -174,16 +208,11 @@ def test_app_request_logs_level_by_status_code(
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "method": "GET",
-                "environment": "foo",
-                "request_size": 0,
-                "response_size": None if stream_response else 6,
-                "response_streamed": stream_response,
                 "endpoint": "some_route",
                 "remote_addr": "127.0.0.1",
                 "parent_span_id": "deadbeef" if with_request_helper else None,
                 "status": status_code,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.05 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
@@ -192,87 +221,16 @@ def test_app_request_logs_level_by_status_code(
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "method": "GET",
-                "environment": "foo",
-                "request_size": 0,
-                "response_size": None if stream_response else 6,
-                "response_streamed": stream_response,
                 "endpoint": "some_route",
                 "remote_addr": "127.0.0.1",
                 "parent_span_id": "deadbeef" if with_request_helper else None,
                 "status": status_code,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.05 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
         in mock_req_logger.log.call_args_list
     )
-
-    assert (
-        mock.call(
-            mock.ANY,
-            AnyStringMatching(r".*streaming response.*", flags=re.I),
-            mock.ANY,
-            extra=mock.ANY,
-        )
-        not in mock_req_logger.log.call_args_list
-    )
-
-    time.sleep(0.05)
-
-    # context manager ensures streamed response is closed
-    with test_response:
-        assert test_response.get_data(as_text=True) == "foobar"
-
-    assert (
-        mock.call(
-            expected_after_level,
-            "Streaming response for %(method)s %(url)s %(status)s closed after %(request_time)ss",
-            {
-                "url": "http://localhost/",
-                "host": "localhost",
-                "path": "/",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "method": "GET",
-                "environment": "foo",
-                "request_size": 0,
-                "response_streamed": True,
-                "endpoint": "some_route",
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": "deadbeef" if with_request_helper else None,
-                "request_id": "feedface" if with_request_helper else None,
-                "span_id": "abadcafe" if with_request_helper else None,
-                "service_id": None,
-                "user_id": None,
-                "status": status_code,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.1 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/",
-                "host": "localhost",
-                "path": "/",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "method": "GET",
-                "environment": "foo",
-                "request_size": 0,
-                "response_streamed": True,
-                "endpoint": "some_route",
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": "deadbeef" if with_request_helper else None,
-                "request_id": "feedface" if with_request_helper else None,
-                "span_id": "abadcafe" if with_request_helper else None,
-                "service_id": None,
-                "user_id": None,
-                "status": status_code,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.1 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    ) == stream_response
 
 
 def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
@@ -301,8 +259,6 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
                 "method": "GET",
                 "endpoint": "some_route",
                 "host": "localhost",
-                "environment": "",
-                "request_size": 0,
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "remote_addr": "127.0.0.1",
@@ -314,8 +270,6 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
                 "method": "GET",
                 "endpoint": "some_route",
                 "host": "localhost",
-                "environment": "",
-                "request_size": 0,
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
                 "remote_addr": "127.0.0.1",
@@ -334,11 +288,6 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
                 "url": "http://localhost/",
                 "method": "GET",
                 "endpoint": "some_route",
-                "environment": "",
-                "request_size": 0,
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
                 "host": "localhost",
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -346,18 +295,12 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
                 "parent_span_id": None,
                 "status": 500,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.05 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
                 "url": "http://localhost/",
                 "method": "GET",
                 "endpoint": "some_route",
-                "environment": "",
-                "request_size": 0,
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
                 "host": "localhost",
                 "path": "/",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -365,7 +308,6 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
                 "parent_span_id": None,
                 "status": 500,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float) and 0.05 <= value),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
@@ -373,10 +315,8 @@ def test_app_request_logs_responses_on_exception(app_with_mocked_logger):
     )
 
 
-@pytest.mark.parametrize("stream_response", (False, True))
-def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_response):
+def test_app_request_logs_response_on_status_200(app_with_mocked_logger):
     app = app_with_mocked_logger
-    app.config["NOTIFY_ENVIRONMENT"] = "bar"
     mock_req_logger = mock.Mock(
         spec=builtin_logging.Logger("flask.app.request"),
         handlers=[],
@@ -386,18 +326,20 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
     @app.route("/_status")
     def status():
         if status_fail:
-            return iter("FAIL") if stream_response else "FAIL", 500
-        return iter("OK") if stream_response else "OK", 200
+            return "FAIL", 500
+        return "OK", 200
 
     @app.route("/metrics")
     def metrics():
-        return iter("OK") if stream_response else "OK", 200
+        return "OK", 200
 
     app.logger.getChild.side_effect = lambda name: mock_req_logger if name == "request" else mock.DEFAULT
 
     logging.init_app(app)
 
     app.test_client().get("/_status")
+
+    print(mock_req_logger.log.call_args_list)
 
     assert (
         mock.call(
@@ -407,10 +349,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "url": "http://localhost/_status",
                 "method": "GET",
                 "endpoint": "status",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/_status",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -418,17 +356,12 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 200,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
                 "url": "http://localhost/_status",
                 "method": "GET",
                 "endpoint": "status",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/_status",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -436,7 +369,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 200,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
@@ -453,10 +385,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "url": "http://localhost/metrics",
                 "method": "GET",
                 "endpoint": "metrics",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/metrics",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -464,17 +392,12 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 200,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
                 "url": "http://localhost/metrics",
                 "method": "GET",
                 "endpoint": "metrics",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/metrics",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -482,7 +405,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 200,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
@@ -500,10 +422,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "url": "http://localhost/_status",
                 "method": "GET",
                 "endpoint": "status",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 4,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/_status",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -511,17 +429,12 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 500,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
                 "url": "http://localhost/_status",
                 "method": "GET",
                 "endpoint": "status",
-                "environment": "bar",
-                "request_size": 0,
-                "response_size": None if stream_response else 4,
-                "response_streamed": stream_response,
                 "host": "localhost",
                 "path": "/_status",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -529,7 +442,6 @@ def test_app_request_logs_response_on_status_200(app_with_mocked_logger, stream_
                 "parent_span_id": None,
                 "status": 500,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
@@ -557,8 +469,6 @@ def test_app_request_logs_responses_on_unknown_route(app_with_mocked_logger):
                 "url": "http://localhost/foo",
                 "method": "GET",
                 "endpoint": None,
-                "environment": "",
-                "request_size": 0,
                 "host": "localhost",
                 "path": "/foo",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -570,8 +480,6 @@ def test_app_request_logs_responses_on_unknown_route(app_with_mocked_logger):
                 "url": "http://localhost/foo",
                 "method": "GET",
                 "endpoint": None,
-                "environment": "",
-                "request_size": 0,
                 "host": "localhost",
                 "path": "/foo",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -591,11 +499,6 @@ def test_app_request_logs_responses_on_unknown_route(app_with_mocked_logger):
                 "url": "http://localhost/foo",
                 "method": "GET",
                 "endpoint": None,
-                "environment": "",
-                "request_size": 0,
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
                 "host": "localhost",
                 "path": "/foo",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -603,18 +506,12 @@ def test_app_request_logs_responses_on_unknown_route(app_with_mocked_logger):
                 "parent_span_id": None,
                 "status": 404,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
             extra={
                 "url": "http://localhost/foo",
                 "method": "GET",
                 "endpoint": None,
-                "environment": "",
-                "request_size": 0,
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
                 "host": "localhost",
                 "path": "/foo",
                 "user_agent": AnyStringMatching("Werkzeug.*"),
@@ -622,272 +519,6 @@ def test_app_request_logs_responses_on_unknown_route(app_with_mocked_logger):
                 "parent_span_id": None,
                 "status": 404,
                 "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    )
-
-
-@pytest.mark.parametrize("stream_response", (False, True))
-def test_app_request_logs_responses_on_post(app_with_mocked_logger, stream_response):
-    app = app_with_mocked_logger
-    mock_req_logger = mock.Mock(
-        spec=builtin_logging.Logger("flask.app.request"),
-        handlers=[],
-    )
-    app.logger.getChild.side_effect = lambda name: mock_req_logger if name == "request" else mock.DEFAULT
-
-    @app.route("/post", methods=["POST"])
-    def post():
-        return iter("OK") if stream_response else "OK", 200
-
-    logging.init_app(app)
-
-    test_response = app.test_client().post("/post", data="foo=bar")
-
-    assert (
-        mock.call(
-            builtin_logging.DEBUG,
-            "Received request %(method)s %(url)s",
-            {
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 7,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 7,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    )
-
-    assert (
-        mock.call(
-            builtin_logging.INFO,
-            "%(method)s %(url)s %(status)s took %(request_time)ss",
-            {
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 7,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "status": 200,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 7,
-                "response_size": None if stream_response else 2,
-                "response_streamed": stream_response,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "status": 200,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    )
-
-    assert (
-        mock.call(
-            builtin_logging.INFO,
-            AnyStringMatching(r".*streaming response.*", flags=re.I),
-            mock.ANY,
-            extra=mock.ANY,
-        )
-        not in mock_req_logger.log.call_args_list
-    )
-
-    # context manager ensures streamed response is closed
-    with test_response:
-        assert test_response.get_data(as_text=True) == "OK"
-
-    assert (
-        mock.call(
-            builtin_logging.INFO,
-            "Streaming response for %(method)s %(url)s %(status)s closed after %(request_time)ss",
-            {
-                "url": "http://localhost/post",
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "method": "POST",
-                "environment": "",
-                "request_size": 7,
-                "response_streamed": True,
-                "endpoint": "post",
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "request_id": None,
-                "span_id": None,
-                "service_id": None,
-                "user_id": None,
-                "status": 200,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/post",
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "method": "POST",
-                "environment": "",
-                "request_size": 7,
-                "response_streamed": True,
-                "endpoint": "post",
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "request_id": None,
-                "span_id": None,
-                "service_id": None,
-                "user_id": None,
-                "status": 200,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    ) == stream_response
-
-
-def test_app_request_logs_responses_over_max_content(app_with_mocked_logger):
-    app = app_with_mocked_logger
-
-    app.config["MAX_CONTENT_LENGTH"] = 3 * 1024 * 1024
-    mock_req_logger = mock.Mock(
-        spec=builtin_logging.Logger("flask.app.request"),
-        handlers=[],
-    )
-    app.logger.getChild.side_effect = lambda name: mock_req_logger if name == "request" else mock.DEFAULT
-
-    @app.route("/post", methods=["POST"])
-    def post():
-        from flask import request
-
-        # need to access data to trigger data too large error
-        _ = request.data
-        return "OK", 200
-
-    logging.init_app(app)
-
-    file_content = b"a" * (3 * 1024 * 1024 + 1)
-    response = app.test_client().post("/post", data=file_content)
-    assert response.status_code == 413
-
-    assert (
-        mock.call(
-            builtin_logging.DEBUG,
-            "Received request %(method)s %(url)s",
-            {
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": (3 * 1024 * 1024 + 1),
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 3145729,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-        )
-        in mock_req_logger.log.call_args_list
-    )
-
-    assert (
-        mock.call(
-            builtin_logging.INFO,
-            "%(method)s %(url)s %(status)s took %(request_time)ss",
-            {
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": (3 * 1024 * 1024 + 1),
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "status": 413,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "process_": RestrictedAny(lambda value: isinstance(value, int)),
-            },
-            extra={
-                "url": "http://localhost/post",
-                "method": "POST",
-                "endpoint": "post",
-                "environment": "",
-                "request_size": 3145729,
-                # flask default error handlers stream responses
-                "response_size": None,
-                "response_streamed": True,
-                "host": "localhost",
-                "path": "/post",
-                "user_agent": AnyStringMatching("Werkzeug.*"),
-                "remote_addr": "127.0.0.1",
-                "parent_span_id": None,
-                "status": 413,
-                "request_time": RestrictedAny(lambda value: isinstance(value, float)),
-                "request_cpu_time": RestrictedAny(lambda value: isinstance(value, float)),
                 "process_": RestrictedAny(lambda value: isinstance(value, int)),
             },
         )
@@ -911,6 +542,28 @@ def test_app_request_logger_level_set(app_with_mocked_logger, level_name, expect
     app.logger.getChild.side_effect = lambda name: mock_req_logger if name == "request" else mock.DEFAULT
 
     app.config["NOTIFY_REQUEST_LOG_LEVEL"] = level_name
+    logging.init_app(app)
+
+    assert mock_req_logger.setLevel.call_args_list[-1] == mock.call(expected_level)
+
+
+@pytest.mark.parametrize(
+    "rtplatform,expected_level",
+    (
+        ("ecs", builtin_logging.NOTSET),
+        ("local", builtin_logging.NOTSET),
+        ("paas", builtin_logging.CRITICAL),
+    ),
+)
+def test_app_request_logger_level_defaults(app_with_mocked_logger, rtplatform, expected_level):
+    app = app_with_mocked_logger
+    mock_req_logger = mock.Mock(
+        spec=builtin_logging.Logger("flask.app.request"),
+        handlers=[],
+    )
+    app.logger.getChild.side_effect = lambda name: mock_req_logger if name == "request" else mock.DEFAULT
+
+    app.config["NOTIFY_RUNTIME_PLATFORM"] = rtplatform
     logging.init_app(app)
 
     assert mock_req_logger.setLevel.call_args_list[-1] == mock.call(expected_level)

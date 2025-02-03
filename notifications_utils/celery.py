@@ -1,6 +1,5 @@
 import time
 from contextlib import contextmanager
-from os import getpid
 
 from celery import Celery, Task
 from flask import g, request
@@ -40,13 +39,7 @@ def make_task(app):
                     self.name,
                     self.queue_name,
                     elapsed_time,
-                    extra={
-                        "celery_task": self.name,
-                        "queue_name": self.queue_name,
-                        "time_taken": elapsed_time,
-                        # avoid name collision with LogRecord's own `process` attribute
-                        "process_": getpid(),
-                    },
+                    extra={"time_taken": elapsed_time},
                 )
 
                 app.statsd_client.timing(
@@ -64,13 +57,7 @@ def make_task(app):
                     self.name,
                     self.queue_name,
                     elapsed_time,
-                    extra={
-                        "celery_task": self.name,
-                        "queue_name": self.queue_name,
-                        "time_taken": elapsed_time,
-                        # avoid name collision with LogRecord's own `process` attribute
-                        "process_": getpid(),
-                    },
+                    extra={"time_taken": elapsed_time},
                 )
 
                 app.statsd_client.incr(f"celery.{self.queue_name}.{self.name}.failure")

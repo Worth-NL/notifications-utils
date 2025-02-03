@@ -4,6 +4,7 @@ from ordered_set import OrderedSet
 
 
 class InsensitiveDict(dict):
+
     """
     `InsensitiveDict` behaves like an ordered dictionary, except it normalises
     case, whitespace, hypens and underscores in keys.
@@ -15,10 +16,9 @@ class InsensitiveDict(dict):
 
     KEY_TRANSLATION_TABLE = {ord(c): None for c in " _-"}
 
-    def __init__(self, row_dict, overwrite_duplicates=True):
+    def __init__(self, row_dict):
         for key, value in row_dict.items():
-            if overwrite_duplicates or key not in self:
-                self[key] = value
+            self[key] = value
 
     @classmethod
     def from_keys(cls, keys):
@@ -29,7 +29,7 @@ class InsensitiveDict(dict):
         - it stores the original, unnormalised key as the value of the
           item so it can be retrieved later
         """
-        return cls({key: key for key in keys}, overwrite_duplicates=False)
+        return cls({key: key for key in keys})
 
     def keys(self):
         return OrderedSet(super().keys())
@@ -58,8 +58,3 @@ class InsensitiveDict(dict):
         if original_key is None:
             return None
         return original_key.translate(InsensitiveDict.KEY_TRANSLATION_TABLE).lower()
-
-
-class InsensitiveSet(OrderedSet):
-    def __init__(self, iterable):
-        return super().__init__(InsensitiveDict.from_keys(iterable).values())

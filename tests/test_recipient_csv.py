@@ -18,7 +18,7 @@ from notifications_utils.recipients import (
     first_column_headings,
 )
 from notifications_utils.template import (
-    HTMLEmailTemplate,
+    EmailPreviewTemplate,
     LetterPreviewTemplate,
     SMSMessageTemplate,
 )
@@ -26,7 +26,7 @@ from notifications_utils.template import (
 
 def _sample_template(template_type, content="foo"):
     return {
-        "email": HTMLEmailTemplate({"content": content, "subject": "bar", "template_type": "email"}),
+        "email": EmailPreviewTemplate({"content": content, "subject": "bar", "template_type": "email"}),
         "sms": SMSMessageTemplate({"content": content, "template_type": "sms"}),
         "letter": LetterPreviewTemplate(
             {"content": content, "subject": "bar", "template_type": "letter"},
@@ -35,7 +35,7 @@ def _sample_template(template_type, content="foo"):
 
 
 def _index_rows(rows):
-    return {row.index for row in rows}
+    return set(row.index for row in rows)
 
 
 @pytest.mark.parametrize(
@@ -359,12 +359,9 @@ def test_check_if_message_too_long_for_sms_but_not_email_in_CSV(mocker, template
 
 def test_overly_big_list_stops_processing_rows_beyond_max(mocker):
     mock_strip_and_remove_obscure_whitespace = mocker.patch(
-        "notifications_utils.recipients.strip_and_remove_obscure_whitespace",
-        side_effect=lambda value: {"07700900123": "07700900123", "example": "example"}.get(value),
+        "notifications_utils.recipients.strip_and_remove_obscure_whitespace"
     )
-    mock_insert_or_append_to_dict = mocker.patch(
-        "notifications_utils.recipients.insert_or_append_to_dict",
-    )
+    mock_insert_or_append_to_dict = mocker.patch("notifications_utils.recipients.insert_or_append_to_dict")
 
     big_csv = RecipientCSV(
         "phonenumber,name\n" + ("07700900123,example\n" * 123),
@@ -499,7 +496,7 @@ def test_get_recipient_respects_order(file_contents, template, expected_recipien
 @pytest.mark.parametrize(
     "file_contents,template_type,expected,expected_missing",
     [
-        ("", "sms", [], {"phone number", "name"}),
+        ("", "sms", [], set(["phone number", "name"])),
         (
             """
                 phone number,name
@@ -533,7 +530,7 @@ def test_get_recipient_respects_order(file_contents, template, expected_recipien
             """,
             "email",
             ["email address", "colour"],
-            {"name"},
+            set(["name"]),
         ),
         (
             """
@@ -689,16 +686,6 @@ def test_recipient_column(content, file_contents, template_type):
             set(),
             set(),
         ),
-        (
-            """
-                ,,,,,,,,,Phone number
-                ,,,,,,,,,07700900100
-                ,,,,,,,,,07700900100
-            """,
-            "sms",
-            set(),
-            set(),
-        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -735,7 +722,7 @@ def test_bad_or_missing_data(
             phone number, country
             1-202-555-0104, USA
             +12025550104, USA
-            +2304031000, Mauritius
+            23051234567, Mauritius
         """,
             set(),
         ),
@@ -746,39 +733,6 @@ def test_international_recipients(file_contents, rows_with_bad_recipients):
         file_contents,
         template=_sample_template("sms"),
         allow_international_sms=True,
-    )
-    assert _index_rows(recipients.rows_with_bad_recipients) == rows_with_bad_recipients
-
-
-@pytest.mark.parametrize(
-    "file_contents,rows_with_bad_recipients",
-    [
-        (
-            """
-            phone number
-            800000000000
-            1234
-            +447900123
-        """,
-            {0, 1, 2},
-        ),
-        (
-            """
-            phone number
-            +441709510122
-            020 3002 4300
-            44117 925 1001
-
-        """,
-            set(),
-        ),
-    ],
-)
-def test_sms_to_uk_landlines(file_contents, rows_with_bad_recipients):
-    recipients = RecipientCSV(
-        file_contents,
-        template=_sample_template("sms"),
-        allow_sms_to_uk_landline=True,
     )
     assert _index_rows(recipients.rows_with_bad_recipients) == rows_with_bad_recipients
 
@@ -890,48 +844,6 @@ def test_detects_rows_which_result_in_overly_long_messages():
     assert recipients[3].has_error_spanning_multiple_cells is True
 
 
-def test_denys_invalid_numbers_when_should_validate_phone_number_set_to_true():
-    template = SMSMessageTemplate(
-        {"content": "test", "template_type": "sms"},
-        sender=None,
-        prefix=None,
-    )
-    recipients = RecipientCSV(
-        """
-            phone number
-            077009004605425890423582904
-            07700900461432482390483204
-            077009004622342342340239489023
-            07700900463523423423432432
-        """,
-        template=template,
-        should_validate_phone_number=True,
-    )
-    assert recipients.has_errors
-    assert _index_rows(recipients.rows_with_errors) == {0, 1, 2, 3}
-
-
-def test_allows_invalid_numbers_when_should_validate_phone_number_set_to_false():
-    template = SMSMessageTemplate(
-        {"content": "test", "template_type": "sms"},
-        sender=None,
-        prefix=None,
-    )
-    recipients = RecipientCSV(
-        """
-            phone number
-            077009004605425890423582904
-            07700900461432482390483204
-            077009004622342342340239489023
-            07700900463523423423432432
-        """,
-        template=template,
-        should_validate_phone_number=False,
-    )
-    assert not recipients.has_errors
-    assert dict(_index_rows(recipients.rows_with_errors)) == {}
-
-
 def test_detects_rows_which_result_in_empty_messages():
     template = SMSMessageTemplate(
         {"content": "((show??content))", "template_type": "sms"},
@@ -998,14 +910,14 @@ def test_ignores_spaces_and_case_in_placeholders(key, expected):
         ("\n", None),  # newline
         ("\r", None),  # carriage return
         ("\t", None),  # tab
-        ("\u180e", "MONGOLIAN VOWEL SEPARATOR"),
-        ("\u200b", "ZERO WIDTH SPACE"),
-        ("\u200c", "ZERO WIDTH NON-JOINER"),
-        ("\u200d", "ZERO WIDTH JOINER"),
+        ("\u180E", "MONGOLIAN VOWEL SEPARATOR"),
+        ("\u200B", "ZERO WIDTH SPACE"),
+        ("\u200C", "ZERO WIDTH NON-JOINER"),
+        ("\u200D", "ZERO WIDTH JOINER"),
         ("\u2060", "WORD JOINER"),
-        ("\ufeff", "ZERO WIDTH NO-BREAK SPACE"),
+        ("\uFEFF", "ZERO WIDTH NO-BREAK SPACE"),
         # all the things
-        (" \n\r\t\u000a\u000d\u180e\u200b\u200c\u200d\u2060\ufeff", None),
+        (" \n\r\t\u000A\u000D\u180E\u200B\u200C\u200D\u2060\uFEFF", None),
     ),
 )
 def test_ignores_leading_whitespace_in_file(character, name):
@@ -1106,7 +1018,7 @@ def test_multiple_sms_recipient_columns(international_sms):
         allow_international_sms=international_sms,
     )
     assert recipients.column_headers == ["phone number", "phone_number", "foo"]
-    assert recipients.column_headers_as_column_keys == {"phonenumber": "", "foo": ""}.keys()
+    assert recipients.column_headers_as_column_keys == dict(phonenumber="", foo="").keys()
     assert recipients.rows[0].get("phone number").data == ("07900 900333")
     assert recipients.rows[0].get("phone_number").data == ("07900 900333")
     assert recipients.rows[0].get("phone number").error is None
@@ -1130,7 +1042,7 @@ def test_multiple_sms_recipient_columns_with_missing_data(column_name):
     if column_name != "phone number":
         expected_column_headers.append(column_name)
     assert recipients.column_headers == expected_column_headers
-    assert recipients.column_headers_as_column_keys == {"phonenumber": "", "names": ""}.keys()
+    assert recipients.column_headers_as_column_keys == dict(phonenumber="", names="").keys()
     # A piece of weirdness uncovered: since rows are created before spaces in column names are normalised, when
     # there are duplicate recipient columns and there is data for only one of the columns, if the columns have the same
     # spacing, phone number data will be a list of this one phone number and None, while if the spacing style differs
@@ -1254,15 +1166,17 @@ def test_address_validation_speed():
     # a second – if it starts to get slow, something is inefficient
     number_of_lines = 1000
     uk_addresses_with_valid_postcodes = "\n".join(
-        "{n} Example Street, London, {a}{b} {c}{d}{e}".format(
-            n=randrange(1000),
-            a=choice(["n", "e", "sw", "se", "w"]),
-            b=choice(range(1, 10)),
-            c=choice(range(1, 10)),
-            d=choice("ABDefgHJLNPqrstUWxyZ"),
-            e=choice("ABDefgHJLNPqrstUWxyZ"),
+        (
+            "{n} Example Street, London, {a}{b} {c}{d}{e}".format(
+                n=randrange(1000),
+                a=choice(["n", "e", "sw", "se", "w"]),
+                b=choice(range(1, 10)),
+                c=choice(range(1, 10)),
+                d=choice("ABDefgHJLNPqrstUWxyZ"),
+                e=choice("ABDefgHJLNPqrstUWxyZ"),
+            )
+            for i in range(number_of_lines)
         )
-        for i in range(number_of_lines)
     )
     recipients = RecipientCSV(
         "address line 1, address line 2, address line 3\n" + (uk_addresses_with_valid_postcodes),
@@ -1275,8 +1189,14 @@ def test_address_validation_speed():
 
 def test_email_validation_speed():
     email_addresses = "\n".join(
-        f"{choice(string.ascii_letters)}{choice(string.ascii_letters)}@example-{randrange(1000)}.com,Example,Thursday"
-        for i in range(1000)
+        (
+            "{a}{b}@example-{n}.com,Example,Thursday".format(
+                n=randrange(1000),
+                a=choice(string.ascii_letters),
+                b=choice(string.ascii_letters),
+            )
+            for i in range(1000)
+        )
     )
     recipients = RecipientCSV(
         "email address,name,day\n" + email_addresses,
@@ -1285,7 +1205,7 @@ def test_email_validation_speed():
             content=f"""
                 hello ((name)) today is ((day))
                 here’s the letter ‘a’ 1000 times:
-                {"a" * 1000}
+                {'a' * 1000}
             """,
         ),
     )

@@ -2,9 +2,9 @@ import dataclasses
 import datetime
 import enum
 import typing
+from typing import Optional
 from urllib.parse import urlencode
 
-import pytz
 import requests
 from flask import current_app
 
@@ -42,19 +42,13 @@ class NotifySupportTicketComment:
     body: str
 
     # A list of file-like objects to attach to the comment
-    attachments: typing.Sequence[NotifySupportTicketAttachment] = ()
+    attachments: typing.Sequence[NotifySupportTicketAttachment] = tuple()
 
     # Whether the comment is public or internal
     public: bool = True
 
 
 class ZendeskClient:
-    """
-    A client for the Zendesk API
-
-    This class is not thread-safe.
-    """
-
     # the account used to authenticate with. If no requester is provided, the ticket will come from this account.
     NOTIFY_ZENDESK_EMAIL = "zd-api-notify@digital.cabinet-office.gov.uk"
 
@@ -62,12 +56,14 @@ class ZendeskClient:
     ZENDESK_UPDATE_TICKET_URL = "https://govuk.zendesk.com/api/v2/tickets/{ticket_id}"
     ZENDESK_UPLOAD_FILE_URL = "https://govuk.zendesk.com/api/v2/uploads.json"
 
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.requests_session = requests.Session()
+    def __init__(self):
+        self.api_key = None
+
+    def init_app(self, app, *args, **kwargs):
+        self.api_key = app.config.get("ZENDESK_API_KEY")
 
     def send_ticket_to_zendesk(self, ticket):
-        response = self.requests_session.post(
+        response = requests.post(
             self.ZENDESK_TICKET_URL, json=ticket.request_data, auth=(f"{self.NOTIFY_ZENDESK_EMAIL}/token", self.api_key)
         )
 
@@ -85,8 +81,6 @@ class ZendeskClient:
 
         current_app.logger.info("Zendesk create ticket %s succeeded", ticket_id)
 
-        return ticket_id
-
     def _is_user_suspended(self, response):
         requester_error = response["details"].get("requester")
         return requester_error and ("suspended" in requester_error[0]["description"])
@@ -96,7 +90,7 @@ class ZendeskClient:
 
         upload_url = self.ZENDESK_UPLOAD_FILE_URL + "?" + urlencode(query_params)
 
-        response = self.requests_session.post(
+        response = requests.post(
             upload_url,
             headers={"Content-Type": attachment.content_type},
             data=attachment.filedata,
@@ -118,9 +112,9 @@ class ZendeskClient:
     def update_ticket(
         self,
         ticket_id: int,
-        comment: NotifySupportTicketComment | None = None,
-        due_at: datetime.datetime | None = None,
-        status: NotifySupportTicketStatus | None = None,
+        comment: Optional[NotifySupportTicketComment] = None,
+        due_at: Optional[datetime.datetime] = None,
+        status: Optional[NotifySupportTicketStatus] = None,
     ):
         data = {"ticket": {}}
 
@@ -142,7 +136,7 @@ class ZendeskClient:
             data["ticket"]["status"] = status.value
 
         update_url = self.ZENDESK_UPDATE_TICKET_URL.format(ticket_id=ticket_id)
-        response = self.requests_session.put(
+        response = requests.put(
             update_url,
             json=data,
             auth=(f"{self.NOTIFY_ZENDESK_EMAIL}/token", self.api_key),
@@ -177,7 +171,7 @@ class NotifySupportTicket:
     NOTIFY_GROUP_ID = 360000036529
     # Organization: GDS
     NOTIFY_ORG_ID = 21891972
-    NOTIFY_TICKET_FORM_ID = 14226867890588
+    NOTIFY_TICKET_FORM_ID = 1900000284794
 
     def __init__(
         self,
@@ -188,14 +182,13 @@ class NotifySupportTicket:
         user_name=None,
         user_email=None,
         requester_sees_message_content=True,
-        notify_ticket_type: NotifyTicketType | None = None,
-        notify_task_type=None,
+        notify_ticket_type: Optional[NotifyTicketType] = None,
+        ticket_categories=None,
         org_id=None,
         org_type=None,
         service_id=None,
         email_ccs=None,
         message_as_html=False,
-        user_created_at=None,
     ):
         self.subject = subject
         self.message = message
@@ -205,13 +198,12 @@ class NotifySupportTicket:
         self.user_email = user_email
         self.requester_sees_message_content = requester_sees_message_content
         self.notify_ticket_type = notify_ticket_type
-        self.notify_task_type = notify_task_type
+        self.ticket_categories = ticket_categories or []
         self.org_id = org_id
         self.org_type = org_type
         self.service_id = service_id
         self.email_ccs = email_ccs
         self.message_as_html = message_as_html
-        self.user_created_at = user_created_at
 
     @property
     def request_data(self):
@@ -241,35 +233,17 @@ class NotifySupportTicket:
 
         return data
 
-    def _format_user_created_at_value(self, created_at_datetime: None | datetime.datetime) -> None | str:
-        """
-        If given a UTC datetime this returns the date as a string in the format of "YYYY-MM-DD" for use
-        with the Zendesk calendar picker
-        """
-        if created_at_datetime:
-            user_created_at_as_london_datetime = created_at_datetime.astimezone(pytz.timezone("Europe/London"))
-
-            formatted_date = user_created_at_as_london_datetime.strftime("%Y-%m-%d")
-
-            return formatted_date
-
-        return None
-
     def _get_custom_fields(self):
         org_type_tag = f"notify_org_type_{self.org_type}" if self.org_type else None
         custom_fields = [
-            {"id": "14229641690396", "value": self.notify_task_type},  # Notify Task type field
+            {"id": "360022836500", "value": self.ticket_categories},  # Notify Ticket category field
             {"id": "360022943959", "value": self.org_id},  # Notify Organisation ID field
             {"id": "360022943979", "value": org_type_tag},  # Notify Organisation type field
             {"id": "1900000745014", "value": self.service_id},  # Notify Service ID field
-            {
-                "id": "15925693889308",
-                "value": self._format_user_created_at_value(self.user_created_at),
-            },  # Notify user account creation date field
         ]
 
         if self.notify_ticket_type:
-            # Notify Responder field
+            # Notify Ticket type field
             custom_fields.append({"id": "1900000744994", "value": self.notify_ticket_type.value})
 
         return custom_fields
