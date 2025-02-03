@@ -216,7 +216,8 @@ def test_handling_of_missing_values(content, values, expected):
         99.99999,
         "off",
         "exclude",
-        "no" "any random string",
+        "no",
+        "any random string",
         "false",
         False,
         [],
@@ -250,7 +251,7 @@ def test_what_will_trigger_conditional_placeholder(value):
             "list: ",
         ),
         (
-            {"placeholder": [" ", " \t ", "\u180E"]},
+            {"placeholder": [" ", " \t ", "\u180e"]},
             "list: ",
             "list: ",
         ),

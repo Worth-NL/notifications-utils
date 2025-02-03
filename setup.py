@@ -1,6 +1,7 @@
 """
 Python API client for GOV.UK Notify
 """
+
 import ast
 import re
 
@@ -22,23 +23,24 @@ setup(
     packages=find_packages(exclude=("tests",)),
     include_package_data=True,
     install_requires=[
-        "cachetools>=4.1.1",
+        "cachetools>=5.5.0",
         "mistune<2.0.0",  # v2 is totally incompatible with unclear benefit
-        "requests>=2.25.0",
-        "python-json-logger>=2.0.1",
-        "Flask>=2.1.1",
+        "requests>=2.32.2",  # Can’t go past 2.32.2 until https://github.com/psf/requests/issues/6730 is fixed
+        "python-json-logger>=2.0.7",
+        "Flask>=3.1.0",
+        "gunicorn[eventlet]>=20.1.0",
         "ordered-set>=4.1.0",
-        "Jinja2>=2.11.3",
-        "statsd>=3.3.0",
+        "Jinja2>=3.1.5",
+        "statsd>=4.0.1",
         "Flask-Redis>=0.4.0",
-        "pyyaml>=5.3.1",
-        "phonenumbers>=8.13.18",
-        "pytz>=2020.4",
+        "pyyaml>=6.0.2",
+        "phonenumbers>=8.13.50",
+        "pytz>=2024.2",
         "smartypants>=2.0.1",
-        "pypdf>=3.9.0",
-        "itsdangerous>=1.1.0",
-        "govuk-bank-holidays>=0.10,<1.0",
-        "boto3>=1.19.4",
-        "segno>=1.5.2,<2.0.0",
+        "pypdf>=3.13.0",
+        "itsdangerous>=2.2.0",
+        "govuk-bank-holidays>=0.15",
+        "boto3[crt]>=1.34.100",
+        "segno>=1.6.1",
     ],
 )

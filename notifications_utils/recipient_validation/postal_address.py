@@ -2,7 +2,7 @@ import re
 from functools import lru_cache
 
 from notifications_utils.countries import UK, Country, CountryNotFoundError
-from notifications_utils.countries.data import Postage
+from notifications_utils.countries.data import UK_POSTCODE_ZONES, Postage
 from notifications_utils.formatters import (
     get_lines_with_normalised_whitespace,
     remove_whitespace,
@@ -147,6 +147,19 @@ class PostalAddress:
         )
 
     @property
+    def has_no_fixed_abode_address(self):
+        """
+        We don't want users to sent to no fixed abode addresses, so validate that
+        - no lines just consist of "NFA" (case insensitive)
+        - the address does not contain "no fixed abode" or "no fixed address" (case insensitive)
+        """
+        if any(line.lower() == "nfa" for line in self.normalised_lines):
+            return True
+        if re.search(r"no fixed (abode|address)", self.normalised, re.IGNORECASE):
+            return True
+        return False
+
+    @property
     def has_invalid_country_for_bfpo_address(self):
         """We don't want users to specify the country if they provide a BFPO number. Some BFPO numbers may resolve
         to non-UK addresses, but this will be handled as part of the BFPO delivery."""
@@ -220,6 +233,7 @@ class PostalAddress:
             and not self.has_too_many_lines
             and not self.has_invalid_characters
             and not (self.international and self.is_bfpo_address)
+            and not self.has_no_fixed_abode_address
         )
 
 
@@ -228,9 +242,9 @@ def normalise_postcode(postcode):
 
 
 def _is_a_real_uk_postcode(postcode):
-    # GIR0AA is Girobank
-    pattern = re.compile(r"([A-Z]{1,2}[0-9][0-9A-Z]?[0-9][A-BD-HJLNP-UW-Z]{2})|(GIR0AA)")
-    return bool(pattern.fullmatch(normalise_postcode(postcode)))
+    normalised = normalise_postcode(postcode)
+    pattern = re.compile(rf"(({'|'.join(UK_POSTCODE_ZONES)})[0-9][0-9A-Z]?[0-9][A-BD-HJLNP-UW-Z]{{2}})")
+    return bool(pattern.fullmatch(normalised))
 
 
 def format_postcode_for_printing(postcode):
