@@ -24,6 +24,7 @@ from notifications_utils.recipient_validation.postal_address import (
 from notifications_utils.template import BaseLetterTemplate, Template
 
 from .qr_code import QrCodeTooLong
+nl_prefix = "31"
 
 first_column_headings = {
     "email": ["email address"],
