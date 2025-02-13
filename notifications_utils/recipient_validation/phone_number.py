@@ -15,6 +15,7 @@ from notifications_utils.international_billing_rates import (
 from notifications_utils.recipient_validation.errors import InvalidPhoneError
 
 UK_PREFIX = "44"
+NL_PREFIX = "31"
 
 LANDLINE_CODES = {
     phonenumbers.PhoneNumberType.FIXED_LINE,
@@ -68,6 +69,17 @@ def is_uk_phone_number(number):
 
     return False
 
+
+def is_nl_phone_number(number):
+    if number.startswith("0") and not number.startswith("00"):
+        return True
+
+    number = normalise_phone_number(number)
+
+    if number.startswith(NL_PREFIX) or (number.startswith("6") and len(number) < 10):
+        return True
+
+    return False
 
 def get_international_phone_info(number):
     number = validate_phone_number(number, international=True)
